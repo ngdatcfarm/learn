@@ -1,0 +1,6 @@
+{
+  "name": "Trắc Nghiệm Tiếng Anh Cho Bé",
+  "description": "Ứng dụng làm bài tập trắc nghiệm tiếng Anh tương tác vui nhộn cho trẻ em từ 6-10 tuổi.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,33 @@
+@import url('https://fonts.googleapis.com/css2?family=Comic+Neue:ital,wght@0,400;0,700;1,400&family=Montserrat:wght@400;700;900&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Comic Neue', 'Montserrat', 'Comic Sans MS', cursive, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* Custom whimsical bouncy cartoon effects */
+@keyframes bubbleBounce {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+.animate-bubble {
+  animation: bubbleBounce 4s ease-in-out infinite;
+}
+
+body {
+  background-color: #f0f9ff;
+  color: #0f172a;
+  overflow-x: hidden;
+  font-family: var(--font-sans);
+}
+
+/* Remove default blue highlighters for mobile tap */
+button, input, select, a {
+  -webkit-tap-highlight-color: transparent;
+}
