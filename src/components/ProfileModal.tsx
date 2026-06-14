@@ -1,14 +1,6 @@
 import { useState } from "react";
 import { motion } from "motion/react";
-import { 
-  UserSquare2, 
-  X, 
-  Check, 
-  Trash2, 
-  Sparkles, 
-  Award,
-  CircleDot
-} from "lucide-react";
+import { UserSquare2, X, Check, Trash2, Sparkles } from "lucide-react";
 import { UserProfile } from "../types";
 import sound from "../utils/sound";
 
@@ -18,6 +10,18 @@ interface ProfileModalProps {
   onClose: () => void;
 }
 
+const levelEmoji: Record<string, string> = {
+  Beginner: "🌱",
+  Intermediate: "🌿",
+  Advanced: "🌳",
+};
+
+const levelDesc: Record<string, string> = {
+  Beginner: "Bạn mới bắt đầu — mình sẽ giúp bạn từ từ nhé!",
+  Intermediate: "Bạn đang ổn rồi — cùng nâng cấp nào!",
+  Advanced: "Bạn giỏi lắm — mình sẽ thử thách bạn thêm!",
+};
+
 export default function ProfileModal({ profile, setProfile, onClose }: ProfileModalProps) {
   const [tempName, setTempName] = useState(profile.name);
   const [tempLevel, setTempLevel] = useState(profile.level);
@@ -26,15 +30,15 @@ export default function ProfileModal({ profile, setProfile, onClose }: ProfileMo
     sound.playSuccess();
     setProfile({
       ...profile,
-      name: tempName || "Nguyên",
-      level: tempLevel
+      name: tempName || "Bạn",
+      level: tempLevel,
     });
     onClose();
   };
 
   const handleClearStats = () => {
     sound.playClick();
-    if (window.confirm("Bạn muốn thiết lập lại toàn bộ tiến trình học tập hiện tại về mặc định?")) {
+    if (window.confirm("Bạn muốn bắt đầu lại từ đầu? Toàn bộ tiến trình sẽ được đặt về mặc định.")) {
       setProfile({
         name: "Nguyên",
         avatar: "N",
@@ -46,125 +50,181 @@ export default function ProfileModal({ profile, setProfile, onClose }: ProfileMo
           wordsLearned: 14,
           chatsCompleted: 2,
           studyMinutes: 45,
-          dailyGoalProgress: 40
-        }
+          dailyGoalProgress: 40,
+        },
       });
       setTempName("Nguyên");
       setTempLevel("Intermediate");
-      alert("Đã thiết lập lại dữ liệu học tập!");
+      alert("Đã đặt lại! Bạn có thể bắt đầu hành trình mới 🌱");
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-[#070a12]/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+    <div
+      className="fixed inset-0 flex items-center justify-center p-4 z-50"
+      style={{ backgroundColor: "var(--bg-overlay)" }}
+    >
       <motion.div
         initial={{ opacity: 0, scale: 0.95, y: 10 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 10 }}
-        className="bg-[#111726] border border-slate-800 p-6 rounded-3xl max-w-md w-full relative space-y-6 shadow-2xl overflow-hidden"
+        className="max-w-md w-full rounded-3xl border p-6 relative space-y-5 shadow-2xl overflow-hidden"
+        style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border)" }}
       >
-        <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-indigo-500/5 to-transparent pointer-events-none" />
-
-        {/* Modal Header */}
-        <div className="flex justify-between items-center pb-3 border-b border-slate-800 relative z-10">
+        {/* Header */}
+        <div
+          className="flex justify-between items-center pb-3 border-b"
+          style={{ borderColor: "var(--border-soft)" }}
+        >
           <div className="flex items-center gap-2">
-            <UserSquare2 className="w-5.5 h-5.5 text-teal-400" />
-            <span className="text-sm font-black text-white">Quản lý Hồ sơ học tập (Apex AI)</span>
+            <span className="text-xl">👤</span>
+            <span className="text-base font-extrabold">Hồ sơ của bạn</span>
           </div>
-          <button 
+          <button
             onClick={onClose}
-            className="p-1 px-1.5 text-slate-500 hover:text-white hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
+            className="p-1.5 rounded-xl transition-colors"
+            style={{ color: "var(--muted)" }}
+            title="Đóng"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Modal body */}
-        <div className="space-y-4.5 relative z-10">
-          
-          {/* Avatar and Info */}
-          <div className="flex items-center gap-3.5 bg-slate-950/40 p-3.5 rounded-2xl border border-slate-805">
-            <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-teal-400 to-indigo-500 flex items-center justify-center text-lg font-black text-white select-none">
-              {(tempName || "N").slice(0, 2).toUpperCase()}
+        {/* Body */}
+        <div className="space-y-4 relative">
+          {/* Avatar preview */}
+          <div
+            className="flex items-center gap-3.5 p-3.5 rounded-2xl border"
+            style={{ backgroundColor: "var(--bg-soft)", borderColor: "var(--border-soft)" }}
+          >
+            <div
+              className="w-12 h-12 rounded-2xl flex items-center justify-center text-xl font-extrabold shadow-sm"
+              style={{
+                background: "linear-gradient(135deg, var(--primary), var(--accent))",
+                color: "white",
+              }}
+            >
+              {(tempName || "B").slice(0, 1).toUpperCase()}
             </div>
             <div>
-              <div className="text-white font-extrabold text-sm tracking-tight">{profile.name || "Nguyên"}</div>
-              <div className="text-[10px] text-slate-500 mt-0.5">Mã thành viên: #APEX-14890</div>
+              <div className="font-extrabold text-sm">{profile.name || "Bạn"}</div>
+              <div className="text-[11px] mt-0.5" style={{ color: "var(--muted)" }}>
+                {levelEmoji[profile.level]} {profile.level} • {profile.stars} ⭐
+              </div>
             </div>
           </div>
 
           {/* Form fields */}
           <div className="space-y-4">
-            
-            {/* Field 1: Name */}
             <div className="space-y-1.5">
-              <label className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wide block">Tên học sinh:</label>
+              <label
+                className="text-xs font-extrabold uppercase tracking-wide block"
+                style={{ color: "var(--muted-strong)" }}
+              >
+                Tên của bạn
+              </label>
               <input
                 type="text"
                 value={tempName}
                 onChange={(e) => setTempName(e.target.value)}
                 maxLength={25}
-                className="w-full bg-slate-950/90 border border-slate-800 rounded-xl px-4 py-3 text-xs text-white placeholder-slate-600 focus:border-teal-500/50 transition-colors"
-                placeholder="Nhập tên học sinh..."
+                className="w-full rounded-xl px-4 py-3 text-sm transition-colors"
+                style={{
+                  backgroundColor: "var(--bg-soft)",
+                  borderColor: "var(--border)",
+                  border: "1px solid var(--border)",
+                  color: "var(--foreground)",
+                }}
+                placeholder="Nhập tên của bạn..."
               />
             </div>
 
-            {/* Field 2: Target Level Selector */}
             <div className="space-y-1.5">
-              <label className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wide block">Trình độ mục tiêu AI:</label>
+              <label
+                className="text-xs font-extrabold uppercase tracking-wide block"
+                style={{ color: "var(--muted-strong)" }}
+              >
+                Trình độ của bạn
+              </label>
               <div className="grid grid-cols-3 gap-2">
-                {(["Beginner", "Intermediate", "Advanced"] as const).map((l) => (
-                  <button
-                    key={l}
-                    onClick={() => {
-                      sound.playClick();
-                      setTempLevel(l);
-                    }}
-                    className={`p-3 rounded-xl border text-center text-xs transition-gradient cursor-pointer font-bold ${
-                      tempLevel === l
-                        ? "bg-teal-500/10 border-teal-505 text-teal-400"
-                        : "bg-slate-950/50 border-slate-800 text-slate-400 hover:border-slate-705"
-                    }`}
-                  >
-                    {l}
-                  </button>
-                ))}
+                {(["Beginner", "Intermediate", "Advanced"] as const).map((l) => {
+                  const isActive = tempLevel === l;
+                  return (
+                    <button
+                      key={l}
+                      onClick={() => {
+                        sound.playClick();
+                        setTempLevel(l);
+                      }}
+                      className="p-3 rounded-xl border text-center text-xs font-extrabold transition-colors"
+                      style={
+                        isActive
+                          ? {
+                              backgroundColor: "var(--primary-soft)",
+                              borderColor: "var(--primary)",
+                              color: "var(--primary)",
+                            }
+                          : {
+                              backgroundColor: "var(--bg-soft)",
+                              borderColor: "var(--border)",
+                              color: "var(--muted)",
+                            }
+                      }
+                    >
+                      <div className="text-xl mb-1">{levelEmoji[l]}</div>
+                      {l === "Beginner" ? "Mới" : l === "Intermediate" ? "Trung bình" : "Nâng cao"}
+                    </button>
+                  );
+                })}
               </div>
-              <p className="text-[10px] text-slate-500 leading-relaxed pt-1 select-none">
-                *Cài đặt này sẽ thay đổi độ phản xạ, từ vựng và chủ đề mà AI Tutor biên soạn cho bạn.*
+              <p
+                className="text-xs leading-relaxed pt-1 flex items-center gap-1"
+                style={{ color: "var(--muted)" }}
+              >
+                <Sparkles className="w-3 h-3 shrink-0" />
+                <span>{levelDesc[tempLevel]}</span>
               </p>
             </div>
-
           </div>
 
-          {/* Risk resets */}
-          <div className="border-t border-slate-800/60 pt-4">
+          {/* Reset */}
+          <div className="pt-2 border-t" style={{ borderColor: "var(--border-soft)" }}>
             <button
               onClick={handleClearStats}
-              className="text-[10px] font-black text-rose-400 hover:text-rose-300 flex items-center gap-1 cursor-pointer select-none"
+              className="text-xs font-extrabold flex items-center gap-1 transition-colors"
+              style={{ color: "var(--danger)" }}
             >
-              <Trash2 className="w-3.5 h-3.5" /> Khôi phục dữ liệu học tập ban đầu
+              <Trash2 className="w-3.5 h-3.5" /> Bắt đầu lại từ đầu
             </button>
           </div>
-
         </div>
 
-        {/* Modal Actions */}
-        <div className="flex gap-2.5 pt-2 border-t border-slate-800">
+        {/* Actions */}
+        <div
+          className="flex gap-2.5 pt-2 border-t"
+          style={{ borderColor: "var(--border-soft)" }}
+        >
           <button
             onClick={onClose}
-            className="flex-1 bg-slate-950 hover:bg-slate-900 text-slate-400 hover:text-white py-3 rounded-xl text-xs font-black transition-colors cursor-pointer select-none"
+            className="flex-1 py-3 rounded-xl text-sm font-extrabold transition-colors"
+            style={{
+              backgroundColor: "var(--bg-soft)",
+              color: "var(--muted)",
+            }}
           >
-            Hủy bỏ
+            Đóng
           </button>
           <button
             onClick={handleSave}
-            className="flex-1 bg-teal-500 hover:bg-teal-400 text-[#090D16] py-3 rounded-xl text-xs font-black transition-colors hover:scale-102 transition-transform cursor-pointer select-none flex items-center justify-center gap-1"
+            className="flex-1 py-3 rounded-xl text-sm font-extrabold transition-all flex items-center justify-center gap-1"
+            style={{
+              backgroundColor: "var(--primary)",
+              color: "var(--on-primary)",
+            }}
           >
-            <Check className="w-4 h-4 shrink-0" /> Lưu cấu hình
+            <Check className="w-4 h-4 shrink-0" /> Lưu lại
           </button>
         </div>
-
       </motion.div>
     </div>
   );

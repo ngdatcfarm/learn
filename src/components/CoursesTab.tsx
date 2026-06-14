@@ -1,17 +1,15 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { 
-  BookOpen, 
-  Clock, 
-  Signal, 
-  ArrowRight, 
-  ChevronRight, 
-  Layers, 
-  Award,
+import {
+  BookOpen,
+  Clock,
+  ChevronRight,
+  Layers,
   BookMarked,
-  Volume2
+  Volume2,
+  Sparkles,
+  ArrowRight,
 } from "lucide-react";
-import { Course } from "../types";
 import { COURSES_DATA } from "../data/coursesData";
 import sound from "../utils/sound";
 
@@ -19,34 +17,47 @@ interface CoursesTabProps {
   onStartChat: () => void;
 }
 
+const difficultyStyle: Record<string, { bg: string; fg: string; bd: string; emoji: string }> = {
+  "IELTS": { bg: "var(--accent-soft)", fg: "var(--accent)", bd: "var(--accent)", emoji: "🎯" },
+  "Học Thuật": { bg: "var(--warning-soft)", fg: "var(--warning)", bd: "var(--warning)", emoji: "🎓" },
+  "Trường THPT": { bg: "var(--primary-soft)", fg: "var(--primary)", bd: "var(--primary)", emoji: "🏫" },
+  "Đại học": { bg: "var(--success-soft)", fg: "var(--success)", bd: "var(--success)", emoji: "🎓" },
+};
+
+const categoryEmoji: Record<string, string> = {
+  Communication: "💬",
+  Academic: "📚",
+  Grammar: "✏️",
+  Vocabulary: "🔤",
+};
+
 export default function CoursesTab({ onStartChat }: CoursesTabProps) {
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
   const [currentCardIndex, setCurrentCardIndex] = useState<number>(0);
 
-  const activeCourse = COURSES_DATA.find(c => c.id === selectedCourseId);
+  const activeCourse = COURSES_DATA.find((c) => c.id === selectedCourseId);
 
-  // Simulated lesson micro-flashcards for interaction!
   const practiceCards: Record<string, { term: string; phonetic: string; explanation: string; example: string }[]> = {
     "course-1": [
-      { term: "Counterargument", phonetic: "/ˈkaʊntəreɪɡjumənt/", explanation: "Luận điểm phản bác một lập trường đưa ra trước đó.", example: "To build a robust debate speech, always formulate a logical counterargument." },
-      { term: "Rebuttal", phonetic: "/rɪˈbʌtl/", explanation: "Sự bác bỏ bằng chứng, chứng minh luận điểm đối thủ sai.", example: "Her sharp rebuttal silenced the opposing panel." },
-      { term: "Fallacy", phonetic: "/ˈfæləsi/", explanation: "Ngụy biện, lỗi sai lập luận mang tính hệ thống.", example: "Relying on emotions rather than logical facts is a common fallacy." }
+      { term: "Counterargument", phonetic: "/ˈkaʊntəreɪɡjumənt/", explanation: "Luận điểm phản bác một quan điểm trước đó.", example: "To build a strong debate speech, always come up with a solid counterargument." },
+      { term: "Rebuttal", phonetic: "/rɪˈbʌtl/", explanation: "Sự bác bỏ bằng chứng cứ, chứng minh đối phương sai.", example: "Her sharp rebuttal silenced the opposing panel." },
+      { term: "Fallacy", phonetic: "/ˈfæləsi/", explanation: "Ngụy biện — lỗi sai lập luận mang tính hệ thống.", example: "Relying on emotions rather than logic is a common fallacy." },
     ],
     "course-2": [
-      { term: "Colloquialism", phonetic: "/kəˈləʊkwiəlɪzəm/", explanation: "Văn phong văn nói mật thiết, từ ngữ đời thường.", example: "'Wanna' and 'gonna' are typical colloquialisms common in teenage slang." },
-      { term: "Polite inquiries", phonetic: "/pəˈlaɪt ɪnˈkwaɪəriz/", explanation: "Các mẫu câu hỏi thăm lịch sự (VD: 'Could you please...').", example: "Polite inquiries help break the ice in international universities." }
+      { term: "Colloquialism", phonetic: "/kəˈləʊkwiəlɪzəm/", explanation: "Từ ngữ đời thường, văn nói thân mật.", example: "'Wanna' and 'gonna' are typical colloquialisms common in teen slang." },
+      { term: "Polite inquiries", phonetic: "/pəˈlaɪt ɪnˈkwaɪəriz/", explanation: "Các mẫu câu hỏi lịch sự (VD: 'Could you please…').", example: "Polite inquiries help break the ice in international universities." },
     ],
     "course-3": [
-      { term: "Analyse", phonetic: "/ˈænəlaɪz/", explanation: "Phân tích cụ thể các thành phần cấu tạo.", example: "Students must analyse scientific diagrams during SAT text passages." },
-      { term: "Slight nuance", phonetic: "/slaɪt ˈnjuːɑːns/", explanation: "Sắc thái ý nghĩa khác biệt cực kỳ nhỏ.", example: "Understanding slight nuances determines high TOEFL results." }
+      { term: "Analyse", phonetic: "/ˈænəlaɪz/", explanation: "Phân tích chi tiết các thành phần.", example: "Students must analyse scientific diagrams during SAT passages." },
+      { term: "Slight nuance", phonetic: "/slaɪt ˈnjuːɑːns/", explanation: "Sắc thái ý nghĩa khác biệt cực nhỏ.", example: "Understanding slight nuances determines high TOEFL results." },
     ],
     "course-4": [
-      { term: "Cohesion", phonetic: "/kəʊˈhiːʒn/", explanation: "Tính mạch lạc, liên kết ngữ nghĩa giữa các câu văn.", example: "Use logical connectors like 'consequently' to reinforce sentence cohesion." },
-      { term: "Academic tone", phonetic: "/ˌækəˈdemɪk təʊn/", explanation: "Phong cách chuẩn mực học thuật, khách quan và không dùng từ lóng.", example: "Keep your IELTS Writing Task 2 in a strict academic tone." }
-    ]
+      { term: "Cohesion", phonetic: "/kəʊˈhiːʒn/", explanation: "Tính mạch lạc giữa các câu trong đoạn văn.", example: "Use logical connectors like 'consequently' to reinforce sentence cohesion." },
+      { term: "Academic tone", phonetic: "/ˌækəˈdemɪk təʊn/", explanation: "Giọng văn học thuật, khách quan, không dùng từ lóng.", example: "Keep your IELTS Writing Task 2 in a strict academic tone." },
+    ],
   };
 
-  const activeFlashcards = selectedCourseId ? (practiceCards[selectedCourseId] || []) : [];
+  const activeFlashcards = selectedCourseId ? practiceCards[selectedCourseId] || [] : [];
 
   const handleStartPractice = (courseId: string) => {
     sound.playClick();
@@ -57,220 +68,293 @@ export default function CoursesTab({ onStartChat }: CoursesTabProps) {
   const handleNextCard = () => {
     sound.playClick();
     if (currentCardIndex < activeFlashcards.length - 1) {
-      setCurrentCardIndex(prev => prev + 1);
+      setCurrentCardIndex((prev) => prev + 1);
     } else {
       setSelectedCourseId(null);
+      setCurrentCardIndex(0);
     }
   };
 
   return (
-    <div id="student-courses" className="w-full max-w-5xl mx-auto space-y-6">
-      
-      {/* Upper header summary */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-800/80 pb-5">
+    <div className="w-full max-w-5xl mx-auto space-y-6">
+      {/* HEADER */}
+      <div
+        className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-5 border-b"
+        style={{ borderColor: "var(--border-soft)" }}
+      >
         <div>
-          <h2 className="text-xl md:text-2xl font-black text-white tracking-tight flex items-center gap-2">
-            <Layers className="w-5.5 h-5.5 text-teal-400" />
-            Khóa học phân cấp Học thuật & Luyện thi
+          <h2 className="text-xl md:text-2xl font-extrabold tracking-tight flex items-center gap-2">
+            <span className="text-2xl">📚</span>
+            Khóa học của bạn
           </h2>
-          <p className="text-slate-400 text-xs md:text-sm mt-0.5">Tập trung nâng tầm năng lực đàm thoại học thuật, SAT và viết luận luận điểm.</p>
+          <p className="text-sm mt-0.5" style={{ color: "var(--muted)" }}>
+            Chọn bài học bạn thích — mỗi bài một bước tiến nhỏ 🚀
+          </p>
         </div>
-        <div className="text-xs text-slate-500 font-bold bg-slate-950 px-3.5 py-2 rounded-xl border border-slate-800 shrink-0">
-          Tổng số: <span className="text-teal-400 font-extrabold">{COURSES_DATA.length} Giáo trình</span>
+        <div
+          className="text-xs font-bold px-3.5 py-2 rounded-xl border shrink-0"
+          style={{ backgroundColor: "var(--bg-soft)", borderColor: "var(--border)", color: "var(--muted)" }}
+        >
+          Tổng cộng: <span style={{ color: "var(--primary)" }} className="font-extrabold">{COURSES_DATA.length} khóa học</span>
         </div>
       </div>
 
-      {/* Main layout grid containing list and practice module overlay */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-
-        {/* Course List Tab */}
+        {/* COURSE LIST */}
         <div className="md:col-span-2 space-y-4">
-          {COURSES_DATA.map((course) => (
-            <div 
-              key={course.id}
-              className="bg-[#111625] hover:bg-[#151b2d] border border-slate-800/80 rounded-2xl p-5 transition-gradient flex flex-col sm:flex-row justify-between gap-5 relative overflow-hidden"
-            >
-              {/* Absract aesthetic technical overlay watermark */}
-              <div className="absolute -right-2 top-0 text-9xl opacity-[0.02] font-black select-none pointer-events-none">
-                {course.difficulty}
-              </div>
-
-              <div className="space-y-3.5 flex-grow">
-                {/* Meta details */}
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className={`text-[9px] font-black tracking-wider uppercase px-2.5 py-0.5 rounded border ${
-                    course.difficulty === "IELTS" 
-                      ? "bg-violet-500/10 text-violet-400 border-violet-500/20"
-                      : course.difficulty === "Học Thuật"
-                      ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
-                      : "bg-teal-500/10 text-teal-400 border-teal-505/20"
-                  }`}>
-                    {course.difficulty}
-                  </span>
-                  <span className="text-[10px] text-slate-500 font-extrabold uppercase">
-                    {course.category}
-                  </span>
-                </div>
-
-                <div className="space-y-1">
-                  <h3 className="text-white font-extrabold text-base md:text-lg tracking-tight hover:text-teal-400 cursor-pointer transition-colors">
-                    {course.title}
-                  </h3>
-                  <p className="text-slate-400 text-xs leading-relaxed max-w-xl">
-                    {course.description}
-                  </p>
-                </div>
-
-                {/* Lower stats meters */}
-                <div className="flex items-center gap-4 text-[11px] text-slate-500 font-bold pt-1">
-                  <span className="flex items-center gap-1">
-                    <BookOpen className="w-3.5 h-3.5" /> {course.lessonsCount} chương học
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <Clock className="w-3.5 h-3.5" /> {course.durationMinutes} phút tự học
-                  </span>
-                </div>
-              </div>
-
-              {/* Progress and button drawer */}
-              <div className="flex flex-row sm:flex-col justify-between sm:justify-center items-center sm:items-end gap-4 border-t sm:border-t-0 border-slate-800/60 pt-4 sm:pt-0 shrink-0 min-w-[130px]">
-                <div className="text-right space-y-1 w-full sm:w-auto">
-                  <div className="text-[10px] text-slate-500 font-extrabold uppercase">Tiến trình học</div>
-                  <div className="flex items-center sm:justify-end gap-1.5">
-                    <span className="text-sm font-black text-white">{course.progress}%</span>
-                    <span className="text-[10px] text-slate-500">({course.completedCount}/{course.lessonsCount})</span>
+          {COURSES_DATA.map((course) => {
+            const diff = difficultyStyle[course.difficulty] || difficultyStyle["Trường THPT"];
+            return (
+              <div
+                key={course.id}
+                className="rounded-2xl p-5 border flex flex-col sm:flex-row justify-between gap-5 relative overflow-hidden transition-colors"
+                style={{
+                  backgroundColor: "var(--bg-card)",
+                  borderColor: "var(--border)",
+                }}
+              >
+                <div className="space-y-3.5 flex-grow">
+                  {/* Meta */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span
+                      className="text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full border tracking-wide"
+                      style={{
+                        backgroundColor: diff.bg,
+                        color: diff.fg,
+                        borderColor: diff.bd,
+                      }}
+                    >
+                      {diff.emoji} {course.difficulty}
+                    </span>
+                    <span
+                      className="text-[10px] font-extrabold uppercase flex items-center gap-1"
+                      style={{ color: "var(--muted)" }}
+                    >
+                      {categoryEmoji[course.category]} {course.category}
+                    </span>
                   </div>
-                  {/* Progress Line */}
-                  <div className="w-24 h-1.5 bg-slate-950 rounded-full overflow-hidden border border-slate-900 hidden sm:block">
-                    <div className="h-full bg-teal-400" style={{ width: `${course.progress}%` }} />
+
+                  <div className="space-y-1">
+                    <h3
+                      className="text-base md:text-lg font-extrabold tracking-tight cursor-pointer transition-colors hover:opacity-80"
+                    >
+                      {course.title}
+                    </h3>
+                    <p className="text-sm leading-relaxed" style={{ color: "var(--muted)" }}>
+                      {course.description}
+                    </p>
+                  </div>
+
+                  <div
+                    className="flex items-center gap-4 text-xs font-bold pt-1"
+                    style={{ color: "var(--muted)" }}
+                  >
+                    <span className="flex items-center gap-1">
+                      <BookOpen className="w-3.5 h-3.5" /> {course.lessonsCount} bài học
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <Clock className="w-3.5 h-3.5" /> {course.durationMinutes} phút
+                    </span>
                   </div>
                 </div>
 
-                <button
-                  onClick={() => handleStartPractice(course.id)}
-                  className="bg-slate-950 hover:bg-slate-900 text-teal-400 border border-slate-800 hover:border-teal-500/40 px-3.5 py-1.5 rounded-xl text-xs font-black transition-gradient cursor-pointer flex items-center gap-1 group active:scale-98 select-none"
+                {/* Progress + button */}
+                <div
+                  className="flex flex-row sm:flex-col justify-between sm:justify-center items-center sm:items-end gap-4 pt-4 sm:pt-0 border-t sm:border-t-0 shrink-0 min-w-[140px]"
+                  style={{ borderColor: "var(--border-soft)" }}
                 >
-                  Học tiếp 
-                  <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
-                </button>
+                  <div className="text-right space-y-1 w-full sm:w-auto">
+                    <div
+                      className="text-[10px] font-extrabold uppercase"
+                      style={{ color: "var(--muted)" }}
+                    >
+                      Tiến độ
+                    </div>
+                    <div className="flex items-center sm:justify-end gap-1.5">
+                      <span className="text-sm font-extrabold">{course.progress}%</span>
+                      <span className="text-[10px]" style={{ color: "var(--muted)" }}>
+                        ({course.completedCount}/{course.lessonsCount})
+                      </span>
+                    </div>
+                    <div
+                      className="w-28 h-1.5 rounded-full overflow-hidden hidden sm:block"
+                      style={{ backgroundColor: "var(--bg-soft)" }}
+                    >
+                      <div
+                        className="h-full rounded-full"
+                        style={{ width: `${course.progress}%`, backgroundColor: "var(--primary)" }}
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => handleStartPractice(course.id)}
+                    className="px-3.5 py-2 rounded-xl text-xs font-extrabold transition-all flex items-center gap-1 group"
+                    style={{
+                      backgroundColor: "var(--primary)",
+                      color: "var(--on-primary)",
+                    }}
+                  >
+                    {course.progress > 0 ? "Học tiếp" : "Bắt đầu học"}
+                    <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
+                  </button>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
-        {/* COLUMN 3: Active flashcard dynamic training workspace */}
+        {/* FLASHCARD SIDEBAR */}
         <div className="space-y-4">
           <AnimatePresence mode="wait">
             {!selectedCourseId ? (
               <motion.div
-                key="empty-state"
+                key="empty"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="bg-[#111625]/40 border border-dashed border-slate-800 p-6 rounded-3xl h-full flex flex-col items-center justify-center text-center space-y-3"
+                className="p-6 rounded-3xl h-full flex flex-col items-center justify-center text-center space-y-3 border-2 border-dashed"
+                style={{ borderColor: "var(--border)", minHeight: 320 }}
               >
-                <div className="w-12 h-12 rounded-2xl bg-slate-950 border border-slate-800/80 flex items-center justify-center text-slate-600 text-2xl select-none">
+                <div
+                  className="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl"
+                  style={{ backgroundColor: "var(--bg-soft)" }}
+                >
                   📓
                 </div>
                 <div>
-                  <h4 className="text-slate-300 font-extrabold text-sm">Chưa có bài tập mở rộng</h4>
-                  <p className="text-slate-500 text-[11px] max-w-xs mt-1">
-                    Nhấn vào nút **"Học tiếp"** trên bất kỳ khóa học nào để rèn luyện Flashcard từ vựng chuyên môn ngay lập tức!
+                  <h4 className="text-sm font-extrabold">Chọn bài để bắt đầu</h4>
+                  <p className="text-xs mt-1 max-w-xs" style={{ color: "var(--muted)" }}>
+                    Nhấn <span className="font-bold" style={{ color: "var(--primary)" }}>"Bắt đầu học"</span> hoặc{" "}
+                    <span className="font-bold" style={{ color: "var(--primary)" }}>"Học tiếp"</span> trên một khóa học để luyện flashcard từ vựng nhé!
                   </p>
                 </div>
               </motion.div>
             ) : (
               <motion.div
-                key="active-state"
+                key="active"
                 initial={{ opacity: 0, scale: 0.96 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.96 }}
-                className="bg-[#111625] border border-slate-805 p-5 rounded-3xl space-y-4 shadow-xl tech-glow-teal"
+                className="p-5 rounded-3xl border space-y-4 shadow-md"
+                style={{
+                  backgroundColor: "var(--bg-card)",
+                  borderColor: "var(--primary)",
+                }}
               >
-                <div className="flex justify-between items-center pb-2 border-b border-slate-805">
+                <div className="flex justify-between items-center pb-2 border-b" style={{ borderColor: "var(--border-soft)" }}>
                   <div className="flex items-center gap-1.5">
-                    <BookMarked className="w-4.5 h-4.5 text-teal-400" />
-                    <span className="text-xs font-black text-white">Flashcard Luyện tập</span>
+                    <BookMarked className="w-4 h-4" style={{ color: "var(--primary)" }} />
+                    <span className="text-sm font-extrabold">Luyện từ vựng</span>
                   </div>
-                  <span className="text-[10px] font-bold text-slate-400">
-                    Thứ tự: {currentCardIndex + 1}/{activeFlashcards.length}
+                  <span
+                    className="text-[10px] font-bold"
+                    style={{ color: "var(--muted)" }}
+                  >
+                    Thẻ {currentCardIndex + 1}/{activeFlashcards.length}
                   </span>
                 </div>
 
-                {/* Main Flashcard display */}
                 {activeFlashcards[currentCardIndex] && (
-                  <motion.div 
+                  <motion.div
                     key={currentCardIndex}
-                    initial={{ x: 10, opacity: 0 }}
+                    initial={{ x: 12, opacity: 0 }}
                     animate={{ x: 0, opacity: 1 }}
                     className="space-y-4"
                   >
-                    {/* Visual Card core */}
-                    <div className="bg-slate-950 p-4.5 rounded-2xl border border-slate-900 space-y-3 relative group">
-                      
+                    <div
+                      className="p-4 rounded-2xl border space-y-3"
+                      style={{ backgroundColor: "var(--bg-soft)", borderColor: "var(--border-soft)" }}
+                    >
                       <div className="flex justify-between items-center">
-                        <span className="text-base font-black text-white tracking-tight">
+                        <span className="text-base font-extrabold tracking-tight">
                           {activeFlashcards[currentCardIndex].term}
                         </span>
-                        
                         <button
-                          onClick={() => {
-                            sound.speakWord(activeFlashcards[currentCardIndex].term);
+                          onClick={() => sound.speakWord(activeFlashcards[currentCardIndex].term)}
+                          className="p-1.5 rounded-lg border transition-colors"
+                          style={{
+                            backgroundColor: "var(--bg-elevated)",
+                            borderColor: "var(--border)",
+                            color: "var(--primary)",
                           }}
-                          className="p-1.5 bg-slate-900 text-teal-400 hover:text-teal-300 border border-slate-800 rounded-lg shrink-0 cursor-pointer active:scale-90"
-                          title="Phát âm chuẩn"
+                          title="Nghe phát âm"
                         >
                           <Volume2 className="w-4 h-4" />
                         </button>
                       </div>
 
-                      <div className="text-[10px] text-teal-400 font-extrabold font-mono tracking-tight select-none">
+                      <div
+                        className="text-[11px] font-bold"
+                        style={{ color: "var(--primary)" }}
+                      >
                         {activeFlashcards[currentCardIndex].phonetic}
                       </div>
 
-                      <div className="text-xs text-slate-300 font-medium border-t border-slate-800/50 pt-2 pb-1">
+                      <div
+                        className="text-sm border-t pt-2"
+                        style={{
+                          borderColor: "var(--border-soft)",
+                          color: "var(--foreground-soft)",
+                        }}
+                      >
                         🇻🇳 {activeFlashcards[currentCardIndex].explanation}
                       </div>
                     </div>
 
-                    {/* Example section style like technical code text */}
                     <div className="space-y-1">
-                      <span className="text-[10px] text-slate-500 uppercase tracking-widest block font-bold">Mẫu câu ứng dụng:</span>
-                      <p className="text-slate-300 italic text-xs leading-relaxed bg-[#0B0F19] p-3 rounded-xl border border-slate-900 font-sans">
+                      <span
+                        className="text-[10px] uppercase tracking-widest block font-bold"
+                        style={{ color: "var(--muted)" }}
+                      >
+                        Ví dụ:
+                      </span>
+                      <p
+                        className="text-sm italic leading-relaxed p-3 rounded-xl border"
+                        style={{
+                          backgroundColor: "var(--bg-soft)",
+                          borderColor: "var(--border-soft)",
+                          color: "var(--foreground-soft)",
+                        }}
+                      >
                         "{activeFlashcards[currentCardIndex].example}"
                       </p>
                     </div>
 
-                    {/* Quick navigation actions */}
                     <button
                       onClick={handleNextCard}
-                      className="w-full bg-teal-500 hover:bg-teal-400 text-[#090D16] py-3 px-4 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 select-none"
+                      className="w-full py-3 px-4 rounded-xl text-sm font-extrabold transition-all flex items-center justify-center gap-1.5"
+                      style={{
+                        backgroundColor: "var(--primary)",
+                        color: "var(--on-primary)",
+                      }}
                     >
-                      {currentCardIndex === activeFlashcards.length - 1 ? "Hoàn thành Lượt" : "Thẻ Tiếp Theo"}
+                      {currentCardIndex === activeFlashcards.length - 1 ? "Hoàn thành 🎉" : "Thẻ tiếp theo"}
                       <ChevronRight className="w-4 h-4" />
                     </button>
                   </motion.div>
                 )}
 
-                {/* Fast Link block with conversational tutor */}
-                <div className="bg-slate-950/50 p-3 rounded-2xl border border-slate-900 text-center">
-                  <p className="text-[10px] text-slate-400 leading-snug">
-                    Muốn thực hành ghép từ vựng này vào câu thảo luận thực tế?
+                <div
+                  className="p-3 rounded-2xl border text-center"
+                  style={{ backgroundColor: "var(--bg-soft)", borderColor: "var(--border-soft)" }}
+                >
+                  <p className="text-xs leading-snug" style={{ color: "var(--muted)" }}>
+                    Muốn dùng từ vựng này trong câu thật?
                   </p>
-                  <button 
+                  <button
                     onClick={onStartChat}
-                    className="text-[11px] text-teal-400 hover:text-teal-300 font-extrabold uppercase mt-2 inline-flex items-center gap-1"
+                    className="text-xs font-extrabold mt-2 inline-flex items-center gap-1"
+                    style={{ color: "var(--primary)" }}
                   >
-                    Gặp AI Tutor Ngay <ArrowRight className="w-3 h-3" />
+                    <Sparkles className="w-3 h-3" /> Chat với AI để luyện
                   </button>
                 </div>
               </motion.div>
             )}
           </AnimatePresence>
         </div>
-
       </div>
-
     </div>
   );
 }

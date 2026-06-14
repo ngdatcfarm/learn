@@ -1,25 +1,34 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, createContext, useContext } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { 
-  Flame, 
-  Sparkles, 
-  Bot, 
-  Layers, 
-  Volume2, 
-  VolumeX, 
-  UserSquare2, 
-  HelpCircle,
-  Trophy,
-  LayoutDashboard
+import {
+  Flame,
+  Sparkles,
+  Bot,
+  Layers,
+  Volume2,
+  VolumeX,
+  UserSquare2,
+  Sun,
+  Moon,
+  LayoutDashboard,
 } from "lucide-react";
 import { UserProfile } from "./types";
 import sound from "./utils/sound";
 
-// Import custom high school modular tab components
 import Dashboard from "./components/Dashboard";
 import CoursesTab from "./components/CoursesTab";
 import AILabTab from "./components/AILabTab";
 import ProfileModal from "./components/ProfileModal";
+
+type Theme = "light" | "dark";
+
+interface ThemeCtx {
+  theme: Theme;
+  toggleTheme: () => void;
+}
+
+const ThemeContext = createContext<ThemeCtx>({ theme: "dark", toggleTheme: () => {} });
+export const useTheme = () => useContext(ThemeContext);
 
 const DEFAULT_PROFILE: UserProfile = {
   name: "Nguyên",
@@ -32,8 +41,8 @@ const DEFAULT_PROFILE: UserProfile = {
     wordsLearned: 14,
     chatsCompleted: 2,
     studyMinutes: 45,
-    dailyGoalProgress: 40
-  }
+    dailyGoalProgress: 40,
+  },
 };
 
 export default function App() {
@@ -41,33 +50,39 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<"dashboard" | "courses" | "ailab">("dashboard");
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
+  const [theme, setTheme] = useState<Theme>("dark");
 
-  // Load state from localStorage on mount
+  // Load persisted state on mount
   useEffect(() => {
     try {
       const savedProfile = localStorage.getItem("apex_student_profile");
-      if (savedProfile) {
-        setProfile(JSON.parse(savedProfile));
-      }
-      
+      if (savedProfile) setProfile(JSON.parse(savedProfile));
+
       const savedSoundState = localStorage.getItem("apex_sound_enabled");
       if (savedSoundState !== null) {
         const enabled = savedSoundState === "true";
         setSoundEnabled(enabled);
         sound.enabled = enabled;
       }
+
+      const savedTheme = localStorage.getItem("apex_theme") as Theme | null;
+      if (savedTheme === "light" || savedTheme === "dark") {
+        setTheme(savedTheme);
+        document.documentElement.setAttribute("data-theme", savedTheme);
+      } else {
+        document.documentElement.setAttribute("data-theme", "dark");
+      }
     } catch (e) {
-      console.error("Failed to load local storage profile state:", e);
+      console.error("Failed to load saved state:", e);
     }
   }, []);
 
-  // Save profile helper
   const handleUpdateProfile = (newProfile: UserProfile) => {
     setProfile(newProfile);
     try {
       localStorage.setItem("apex_student_profile", JSON.stringify(newProfile));
     } catch (e) {
-      console.error("Failed to save local storage profile state:", e);
+      console.error("Failed to save profile:", e);
     }
   };
 
@@ -83,211 +98,227 @@ export default function App() {
     }
   };
 
+  const handleToggleTheme = () => {
+    const nextTheme: Theme = theme === "dark" ? "light" : "dark";
+    setTheme(nextTheme);
+    document.documentElement.setAttribute("data-theme", nextTheme);
+    sound.playClick();
+    try {
+      localStorage.setItem("apex_theme", nextTheme);
+    } catch (e) {
+      console.warn("Storage warning:", e);
+    }
+  };
+
+  const navItems: { id: "dashboard" | "courses" | "ailab"; label: string; icon: any; emoji: string }[] = [
+    { id: "dashboard", label: "Hôm nay", icon: LayoutDashboard, emoji: "🏠" },
+    { id: "courses", label: "Khóa học", icon: Layers, emoji: "📚" },
+    { id: "ailab", label: "Chat AI", icon: Bot, emoji: "💬" },
+  ];
+
   return (
-    <div className="min-h-screen bg-[#0B0F19] text-[#F1F5F9] antialiased flex flex-col justify-between select-none relative pb-20 md:pb-6">
-      
-      {/* 1. Header - Modern, Flat & Technical (No big cartoon avatars) */}
-      <header className="border-b border-slate-800 bg-[#0C1220]/90 backdrop-blur-md sticky top-0 z-40 px-4 py-3">
-        <div className="w-full max-w-5xl mx-auto flex justify-between items-center">
-          
-          <div className="flex items-center gap-2.5 cursor-pointer" onClick={() => setActiveTab("dashboard")}>
-            {/* Minimal High-End Vector Logo */}
-            <div className="w-8.5 h-8.5 rounded-lg bg-teal-500 flex items-center justify-center font-black text-xs text-[#090D16]">
-              AP
+    <ThemeContext.Provider value={{ theme, toggleTheme: handleToggleTheme }}>
+      <div
+        className="min-h-screen flex flex-col justify-between relative pb-24 md:pb-6 antialiased"
+        style={{ backgroundColor: "var(--bg)", color: "var(--foreground)" }}
+      >
+        {/* HEADER */}
+        <header
+          className="sticky top-0 z-40 px-4 py-3 border-b backdrop-blur-md"
+          style={{
+            backgroundColor: "var(--bg-overlay)",
+            borderColor: "var(--border-soft)",
+          }}
+        >
+          <div className="w-full max-w-5xl mx-auto flex justify-between items-center">
+            {/* Logo */}
+            <div
+              className="flex items-center gap-2.5 cursor-pointer"
+              onClick={() => setActiveTab("dashboard")}
+            >
+              <div className="floaty w-10 h-10 rounded-2xl bg-gradient-to-br from-sky-400 to-violet-500 flex items-center justify-center shadow-md">
+                <span className="text-xl">🦉</span>
+              </div>
+              <div>
+                <div className="text-base font-extrabold tracking-tight">
+                  Tiếng Anh của mình
+                </div>
+                <div
+                  className="text-[10px] font-bold tracking-wide"
+                  style={{ color: "var(--primary)" }}
+                >
+                  ✨ Học vui mỗi ngày
+                </div>
+              </div>
             </div>
-            <div>
-              <div className="text-sm font-black text-white tracking-widest uppercase">APEX AI</div>
-              <div className="text-[9px] text-[#55F0D0] tracking-wide font-bold">EDTECH PORTAL</div>
+
+            {/* Controls */}
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={handleToggleSound}
+                className="p-2 rounded-xl border transition-colors"
+                style={{
+                  backgroundColor: "var(--bg-soft)",
+                  borderColor: "var(--border)",
+                  color: soundEnabled ? "var(--primary)" : "var(--muted)",
+                }}
+                title={soundEnabled ? "Tắt âm thanh" : "Bật âm thanh"}
+                aria-label="Toggle sound"
+              >
+                {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+              </button>
+
+              <button
+                onClick={handleToggleTheme}
+                className="p-2 rounded-xl border transition-colors"
+                style={{
+                  backgroundColor: "var(--bg-soft)",
+                  borderColor: "var(--border)",
+                  color: "var(--muted)",
+                }}
+                title={theme === "dark" ? "Chuyển sang sáng" : "Chuyển sang tối"}
+                aria-label="Toggle theme"
+              >
+                {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+              </button>
+
+              <button
+                onClick={() => {
+                  sound.playClick();
+                  setIsProfileOpen(true);
+                }}
+                className="p-2 rounded-xl border transition-colors flex items-center gap-1.5"
+                style={{
+                  backgroundColor: "var(--bg-soft)",
+                  borderColor: "var(--border)",
+                  color: "var(--foreground-soft)",
+                }}
+                title="Hồ sơ của bạn"
+              >
+                <UserSquare2 className="w-4 h-4" />
+                <span className="text-xs font-bold hidden sm:inline">{profile.name}</span>
+              </button>
             </div>
           </div>
+        </header>
 
-          {/* Settings / Controls */}
-          <div className="flex items-center gap-2">
-            
-            {/* Direct Sound Toggle */}
-            <button
-              onClick={handleToggleSound}
-              className="p-1.5 md:p-2 bg-slate-900 border border-slate-805 hover:bg-slate-850 rounded-xl text-slate-400 hover:text-teal-400 transition-colors cursor-pointer"
-              title="Toggle Sound Synthesizer"
-            >
-              {soundEnabled ? (
-                <Volume2 className="w-4 h-4 text-teal-400" />
-              ) : (
-                <VolumeX className="w-4 h-4 text-slate-500" />
-              )}
-            </button>
+        {/* MAIN */}
+        <main className="flex-grow w-full max-w-5xl mx-auto px-4 py-6 md:py-8 flex flex-col justify-start">
+          <AnimatePresence mode="wait">
+            {activeTab === "dashboard" && (
+              <motion.div
+                key="dashboard"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.2 }}
+              >
+                <Dashboard profile={profile} setProfile={handleUpdateProfile} onNavigate={setActiveTab} />
+              </motion.div>
+            )}
+            {activeTab === "courses" && (
+              <motion.div
+                key="courses"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.2 }}
+              >
+                <CoursesTab onStartChat={() => setActiveTab("ailab")} />
+              </motion.div>
+            )}
+            {activeTab === "ailab" && (
+              <motion.div
+                key="ailab"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.2 }}
+              >
+                <AILabTab profile={profile} setProfile={handleUpdateProfile} />
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </main>
 
-            {/* Profile Config key */}
-            <button
-              onClick={() => {
-                sound.playClick();
-                setIsProfileOpen(true);
-              }}
-              className="p-1.5 md:p-2 bg-slate-900 border border-slate-805 hover:bg-slate-850 rounded-xl text-slate-400 hover:text-white transition-colors cursor-pointer flex items-center gap-1.5"
-              title="Quản lý Hồ sơ"
-            >
-              <UserSquare2 className="w-4 h-4" />
-              <span className="text-[10px] md:text-xs font-bold text-slate-350 hidden sm:inline">
-                {profile.name} (Lớp {profile.level})
-              </span>
-            </button>
-
+        {/* MOBILE BOTTOM NAV */}
+        <nav
+          className="fixed bottom-0 inset-x-0 z-40 px-3 py-2.5 border-t backdrop-blur-lg md:hidden"
+          style={{
+            backgroundColor: "var(--bg-overlay)",
+            borderColor: "var(--border-soft)",
+          }}
+        >
+          <div className="w-full max-w-md mx-auto flex justify-around items-center">
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => {
+                    sound.playClick();
+                    setActiveTab(item.id);
+                  }}
+                  className="flex flex-col items-center gap-0.5 px-4 py-1.5 rounded-2xl transition-all"
+                  style={{
+                    color: isActive ? "var(--primary)" : "var(--muted)",
+                    backgroundColor: isActive ? "var(--primary-soft)" : "transparent",
+                  }}
+                >
+                  <span className="text-lg leading-none">{item.emoji}</span>
+                  <span className="text-[10px] font-bold">{item.label}</span>
+                </button>
+              );
+            })}
           </div>
+        </nav>
+
+        {/* DESKTOP FLOATING SIDE NAV */}
+        <div
+          className="hidden md:flex fixed left-5 top-1/2 -translate-y-1/2 flex-col gap-2 p-2 rounded-2xl border backdrop-blur-md z-40 shadow-lg"
+          style={{
+            backgroundColor: "var(--bg-overlay)",
+            borderColor: "var(--border)",
+          }}
+        >
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => {
+                  sound.playClick();
+                  setActiveTab(item.id);
+                }}
+                className="p-3 rounded-xl transition-all flex flex-col items-center gap-0.5 min-w-[60px]"
+                style={{
+                  backgroundColor: isActive ? "var(--primary-soft)" : "transparent",
+                  color: isActive ? "var(--primary)" : "var(--muted)",
+                }}
+                title={item.label}
+              >
+                <span className="text-lg leading-none">{item.emoji}</span>
+                <span className="text-[9px] font-extrabold uppercase tracking-wide">
+                  {item.label}
+                </span>
+              </button>
+            );
+          })}
         </div>
-      </header>
 
-      {/* 2. Main App Content Pane */}
-      <main className="flex-grow w-full max-w-5xl mx-auto px-4 py-6 md:py-8 flex flex-col justify-start">
-        <AnimatePresence mode="wait">
-          {activeTab === "dashboard" && (
-            <motion.div
-              key="dashboard"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2 }}
-            >
-              <Dashboard 
-                profile={profile} 
-                setProfile={handleUpdateProfile} 
-                onNavigate={setActiveTab}
-              />
-            </motion.div>
-          )}
-
-          {activeTab === "courses" && (
-            <motion.div
-              key="courses"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2 }}
-            >
-              <CoursesTab 
-                onStartChat={() => setActiveTab("ailab")}
-              />
-            </motion.div>
-          )}
-
-          {activeTab === "ailab" && (
-            <motion.div
-              key="ailab"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2 }}
-            >
-              <AILabTab 
-                profile={profile} 
-                setProfile={handleUpdateProfile}
-              />
-            </motion.div>
+        {/* PROFILE MODAL */}
+        <AnimatePresence>
+          {isProfileOpen && (
+            <ProfileModal
+              profile={profile}
+              setProfile={handleUpdateProfile}
+              onClose={() => setIsProfileOpen(false)}
+            />
           )}
         </AnimatePresence>
-      </main>
-
-      {/* 3. Understated Bottom Nav Bar (Home, Courses, AI Lab) */}
-      <nav className="fixed bottom-0 inset-x-0 bg-[#0C1220]/95 backdrop-blur-lg border-t border-slate-800/80 px-6 py-2.5 md:py-3.5 z-40 relative md:bottom-auto md:border-b-0 md:bg-transparent md:pointer-events-none md:hidden">
-        <div className="w-full max-w-md mx-auto flex justify-around items-center">
-          
-          <button
-            onClick={() => {
-              sound.playClick();
-              setActiveTab("dashboard");
-            }}
-            className={`flex flex-col items-center gap-1 cursor-pointer select-none transition-colors ${
-              activeTab === "dashboard" ? "text-teal-400" : "text-slate-500 hover:text-slate-300"
-            }`}
-          >
-            <LayoutDashboard className="w-5 h-5 stroke-[2]" />
-            <span className="text-[9px] font-bold uppercase tracking-wider">Dashboard</span>
-          </button>
-
-          <button
-            onClick={() => {
-              sound.playClick();
-              setActiveTab("courses");
-            }}
-            className={`flex flex-col items-center gap-1 cursor-pointer select-none transition-colors ${
-              activeTab === "courses" ? "text-teal-400" : "text-slate-500 hover:text-slate-300"
-            }`}
-          >
-            <Layers className="w-5 h-5 stroke-[2]" />
-            <span className="text-[9px] font-bold uppercase tracking-wider">Khóa Học</span>
-          </button>
-
-          <button
-            onClick={() => {
-              sound.playClick();
-              setActiveTab("ailab");
-            }}
-            className={`flex flex-col items-center gap-1 cursor-pointer select-none transition-colors relative ${
-              activeTab === "ailab" ? "text-teal-400" : "text-slate-500 hover:text-slate-300"
-            }`}
-          >
-            <Bot className="w-5 h-5 stroke-[2]" />
-            <span className="text-[9px] font-bold uppercase tracking-wider">AI Lab</span>
-          </button>
-
-        </div>
-      </nav>
-
-      {/* Large screen navigational support sidebar-tabs displayed in a floating layout */}
-      <div className="hidden md:flex fixed left-6 top-1/2 -translate-y-1/2 flex-col gap-4 bg-slate-900/80 backdrop-blur-md p-2 rounded-2xl border border-slate-800/80 z-40 self-center">
-        <button
-          onClick={() => {
-            sound.playClick();
-            setActiveTab("dashboard");
-          }}
-          className={`p-3 rounded-xl transition-colors cursor-pointer select-none flex flex-col items-center gap-1 ${
-            activeTab === "dashboard" ? "bg-teal-500/10 text-teal-400 border border-teal-500/20" : "text-slate-500 hover:text-slate-300"
-          }`}
-          title="Dashboard / Lộ trình"
-        >
-          <LayoutDashboard className="w-5.5 h-5.5" />
-          <span className="text-[8px] font-extrabold uppercase">Home</span>
-        </button>
-
-        <button
-          onClick={() => {
-            sound.playClick();
-            setActiveTab("courses");
-          }}
-          className={`p-3 rounded-xl transition-colors cursor-pointer select-none flex flex-col items-center gap-1 ${
-            activeTab === "courses" ? "bg-teal-500/10 text-teal-400 border border-teal-505/20" : "text-slate-500 hover:text-slate-300"
-          }`}
-          title="Khóa Học Chuyên Sâu"
-        >
-          <Layers className="w-5.5 h-5.5" />
-          <span className="text-[8px] font-extrabold uppercase">G.Trình</span>
-        </button>
-
-        <button
-          onClick={() => {
-            sound.playClick();
-            setActiveTab("ailab");
-          }}
-          className={`p-3 rounded-xl transition-colors cursor-pointer select-none flex flex-col items-center gap-1` + (
-            activeTab === "ailab" ? " bg-teal-500/10 text-teal-400 border border-teal-500/20" : " text-slate-505 hover:text-slate-300"
-          )}
-          title="Tương Tác Live AI Lab"
-        >
-          <Bot className="w-5.5 h-5.5" />
-          <span className="text-[8px] font-extrabold uppercase">AI Lab</span>
-        </button>
       </div>
-
-      {/* 4. Edit profile Popup modal */}
-      <AnimatePresence>
-        {isProfileOpen && (
-          <ProfileModal
-            profile={profile}
-            setProfile={handleUpdateProfile}
-            onClose={() => setIsProfileOpen(false)}
-          />
-        )}
-      </AnimatePresence>
-
-    </div>
+    </ThemeContext.Provider>
   );
 }
