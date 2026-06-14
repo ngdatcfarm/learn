@@ -1,55 +1,77 @@
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=Space+Grotesk:wght@500;700;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
 @import "tailwindcss";
 
 @theme {
-  --font-sans: 'Space Grotesk', 'Plus Jakarta Sans', system-ui, sans-serif;
+  --font-sans: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;
 }
 
-/* Premium Neo-Brutalist Tactile Shadow Utilities */
-.neo-shadow {
-  box-shadow: 4px 4px 0px 0px rgba(15, 23, 42, 1);
+/* Custom glow effects for premium look */
+.tech-glow-teal {
+  box-shadow: 0 0 20px 2px rgba(20, 184, 166, 0.15);
 }
 
-.neo-shadow-lg {
-  box-shadow: 8px 8px 0px 0px rgba(15, 23, 42, 1);
+.tech-glow-purple {
+  box-shadow: 0 0 20px 2px rgba(168, 85, 247, 0.15);
 }
 
-.neo-shadow-sm {
-  box-shadow: 2.5px 2.5px 0px 0px rgba(15, 23, 42, 1);
-}
-
-.neo-shadow-yellow {
-  box-shadow: 4px 4px 0px 0px #F59E0B;
-}
-
-/* Custom whimsical bouncy cartoon effects */
-@keyframes bubbleBounce {
+/* Custom soundwave animation */
+@keyframes audioWave {
   0%, 100% {
-    transform: translateY(0) rotate(0deg);
+    transform: scaleY(0.3);
   }
   50% {
-    transform: translateY(-10px) rotate(1deg);
+    transform: scaleY(1);
   }
 }
 
-.animate-bubble {
-  animation: bubbleBounce 5s ease-in-out infinite;
+.wave-bar {
+  animation: audioWave 1.2s ease-in-out infinite;
+}
+
+.wave-bar:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.wave-bar:nth-child(3) {
+  animation-delay: 0.3s;
+}
+.wave-bar:nth-child(4) {
+  animation-delay: 0.05s;
+}
+.wave-bar:nth-child(5) {
+  animation-delay: 0.2s;
 }
 
 body {
-  background-color: #F8FAFC;
-  background-image: 
-    radial-gradient(#E2E8F0 1.5px, transparent 1.5px), 
-    radial-gradient(#E2E8F0 1.5px, #F8FAFC 1.5px);
-  background-size: 32px 32px;
-  background-position: 0 0, 16px 16px;
-  color: #0F172A;
-  overflow-x: hidden;
+  background-color: #0B0F19; /* Deep Space Navy */
+  color: #F1F5F9;
   font-family: var(--font-sans);
+  overflow-x: hidden;
+  letter-spacing: -0.01em;
 }
 
-/* Remove default blue highlighters for mobile tap */
-button, input, select, a {
+/* Customized thin scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: #0B0F19;
+}
+::-webkit-scrollbar-thumb {
+  background: #1E293B;
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}
+
+/* Interactive transitions */
+.transition-gradient {
+  transition: background-color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+button, input, select, textarea {
+  outline: none;
   -webkit-tap-highlight-color: transparent;
 }

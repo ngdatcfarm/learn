@@ -1,6 +1,6 @@
 {
   "name": "Trắc Nghiệm Tiếng Anh Cho Bé",
-  "description": "Ứng dụng làm bài tập trắc nghiệm tiếng Anh tương tác vui nhộn cho trẻ em từ 6-10 tuổi.",
+  "description": "Nền tảng học Tiếng Anh thông minh hỗ trợ bởi AI, tối giản và chuyên sâu dành cho học sinh THPT 14-18 tuổi.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

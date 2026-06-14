@@ -157,8 +157,8 @@ class SoundSynth {
         window.speechSynthesis.cancel(); // Cancel any current utterances
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = 'en-US'; // English speaking setting
-        utterance.rate = 0.85; // Speak slightly slower for kids to understand clearly
-        utterance.pitch = 1.15; // Slightly higher pitch for a friendly child-like voice
+        utterance.rate = 0.95; // Natural speed
+        utterance.pitch = 1.0; // Professional friendly pitch
         window.speechSynthesis.speak(utterance);
       }
     } catch (e) {
