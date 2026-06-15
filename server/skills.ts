@@ -1,16 +1,22 @@
 /**
- * server/skills.ts — Skill measurement API
+ * server/skills.ts — Skill measurement API (MySQL)
  *
  * Nguyên tắc:
  *   - skill_measurements là APPEND-ONLY (không update, không delete)
  *   - Client chỉ gửi raw event: { skill, metric, value, context }
  *   - Server append, rồi compute current state từ history
  *   - Client không tự tính running average
+ *
+ * Khác biệt với SQLite:
+ *   - Tất cả route handlers + compute fns là async
+ *   - `db.prepare(...).get()` → `await queryOne(...)`
+ *   - `db.prepare(...).all()` → `await query(...)` (trả về array)
+ *   - `db.prepare(...).run()` → `await query(...)` (trả về ResultSetHeader)
  */
 
 import { Router, Request, Response } from "express";
 import crypto from "node:crypto";
-import { getDb } from "../db/client";
+import { query, queryOne, RowDataPacket, ResultSetHeader } from "../db/client";
 import { requireUser, AuthUser } from "./auth";
 
 const VALID_SKILLS = ["read", "write", "listen", "speak", "learn"] as const;
@@ -21,11 +27,9 @@ export const skillsRouter = Router();
  * POST /api/skills/measure
  * Body: { skill, metric, value, context? }
  * Header: Authorization: Bearer <token>
- *
- * Append 1 measurement. Trả về current state (server-computed).
  */
-skillsRouter.post("/measure", (req: Request, res: Response) => {
-  const user = requireUser(req, res);
+skillsRouter.post("/measure", async (req: Request, res: Response) => {
+  const user = await requireUser(req, res);
   if (!user) return;
 
   const { skill, metric, value, context } = req.body || {};
@@ -42,47 +46,44 @@ skillsRouter.post("/measure", (req: Request, res: Response) => {
   const id = crypto.randomUUID();
   const contextJson = context ? JSON.stringify(context) : null;
 
-  getDb()
-    .prepare(
-      `INSERT INTO skill_measurements (id, user_id, skill, metric, value, context_json)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    )
-    .run(id, user.id, skill, metric, value, contextJson);
+  await query<ResultSetHeader>(
+    `INSERT INTO skill_measurements (id, user_id, skill, metric, value, context_json)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [id, user.id, skill, metric, value, contextJson]
+  );
 
-  // Trả về current state cho client refresh
-  const current = computeCurrentSkills(user.id);
+  const current = await computeCurrentSkills(user.id);
   res.json({ ok: true, id, current });
 });
 
 /**
  * GET /api/skills/me
- * Header: Authorization: Bearer <token>
- * Response: { skills: { read: {...}, write: {...}, ... }, engagement: {...} }
  */
-skillsRouter.get("/me", (req: Request, res: Response) => {
-  const user = requireUser(req, res);
+skillsRouter.get("/me", async (req: Request, res: Response) => {
+  const user = await requireUser(req, res);
   if (!user) return;
-  res.json({
-    skills: computeCurrentSkills(user.id),
-    engagement: computeEngagement(user.id),
-  });
+  const [skills, engagement] = await Promise.all([
+    computeCurrentSkills(user.id),
+    computeEngagement(user.id),
+  ]);
+  res.json({ skills, engagement });
 });
 
 /**
  * GET /api/skills/:userId
  * (Teacher xem HS, PH xem con)
- * Header: Authorization: Bearer <token>
  */
-skillsRouter.get("/:userId", (req: Request, res: Response) => {
-  const me = requireUser(req, res);
+skillsRouter.get("/:userId", async (req: Request, res: Response) => {
+  const me = await requireUser(req, res);
   if (!me) return;
   const targetUserId = req.params.userId;
 
   // PH chỉ xem được con của mình
   if (me.role === "parent") {
-    const isLinked = getDb()
-      .prepare("SELECT 1 FROM parent_links WHERE parent_id = ? AND student_id = ?")
-      .get(me.id, targetUserId);
+    const isLinked = await queryOne(
+      "SELECT 1 FROM parent_links WHERE parent_id = ? AND student_id = ?",
+      [me.id, targetUserId]
+    );
     if (!isLinked) {
       return res.status(403).json({ error: "Bạn không có quyền xem học sinh này." });
     }
@@ -93,22 +94,22 @@ skillsRouter.get("/:userId", (req: Request, res: Response) => {
   }
   // GV: kiểm tra HS có trong lớp mình dạy không
   else if (me.role === "teacher") {
-    const teaches = getDb()
-      .prepare(
-        `SELECT 1 FROM class_members cm
-         JOIN classes c ON c.id = cm.class_id
-         WHERE cm.student_id = ? AND c.teacher_id = ?`
-      )
-      .get(targetUserId, me.id);
+    const teaches = await queryOne(
+      `SELECT 1 FROM class_members cm
+       JOIN classes c ON c.id = cm.class_id
+       WHERE cm.student_id = ? AND c.teacher_id = ?`,
+      [targetUserId, me.id]
+    );
     if (!teaches) {
       return res.status(403).json({ error: "Học sinh này không thuộc lớp bạn dạy." });
     }
   }
 
-  res.json({
-    skills: computeCurrentSkills(targetUserId),
-    engagement: computeEngagement(targetUserId),
-  });
+  const [skills, engagement] = await Promise.all([
+    computeCurrentSkills(targetUserId),
+    computeEngagement(targetUserId),
+  ]);
+  res.json({ skills, engagement });
 });
 
 // ============================================================
@@ -130,8 +131,15 @@ interface SkillState {
   [metric: string]: number | string | null;
 }
 
-export function computeCurrentSkills(userId: string): Record<string, SkillState> {
-  const db = getDb();
+interface MeasurementRow extends RowDataPacket {
+  metric: string;
+  value: number;
+  measured_at: string;
+}
+
+export async function computeCurrentSkills(
+  userId: string
+): Promise<Record<string, SkillState>> {
   const out: Record<string, SkillState> = {};
 
   for (const skill of VALID_SKILLS) {
@@ -143,14 +151,16 @@ export function computeCurrentSkills(userId: string): Record<string, SkillState>
     };
     for (const m of metrics) state[m] = 0;
 
-    const rows = db
-      .prepare(
-        `SELECT metric, value, measured_at FROM skill_measurements
-         WHERE user_id = ? AND skill = ? ORDER BY measured_at DESC`
-      )
-      .all(userId, skill) as { metric: string; value: number; measured_at: string }[];
+    const rows = (await query<MeasurementRow[]>(
+      `SELECT metric, value, measured_at FROM skill_measurements
+       WHERE user_id = ? AND skill = ? ORDER BY measured_at DESC`,
+      [userId, skill]
+    )) as MeasurementRow[];
 
-    if (rows.length === 0) continue;
+    if (rows.length === 0) {
+      out[skill] = state;
+      continue;
+    }
 
     // Recent 5 measurements weighted average
     const recent = rows.slice(0, 5);
@@ -196,7 +206,13 @@ export function computeCurrentSkills(userId: string): Record<string, SkillState>
   return out;
 }
 
-export function computeEngagement(userId: string): {
+interface EngagementEventRow extends RowDataPacket {
+  event: string;
+  value: number | null;
+  occurred_at: string;
+}
+
+export async function computeEngagement(userId: string): Promise<{
   streak: number;
   avgSessionMinutes: number;
   retryRate: number;
@@ -204,14 +220,12 @@ export function computeEngagement(userId: string): {
   dropoutPerTask: number;
   lastActive: string | null;
   totalEvents: number;
-} {
-  const db = getDb();
-  const events = db
-    .prepare(
-      `SELECT event, value, occurred_at FROM engagement_events
-       WHERE user_id = ? ORDER BY occurred_at DESC LIMIT 500`
-    )
-    .all(userId) as { event: string; value: number | null; occurred_at: string }[];
+}> {
+  const events = (await query<EngagementEventRow[]>(
+    `SELECT event, value, occurred_at FROM engagement_events
+     WHERE user_id = ? ORDER BY occurred_at DESC LIMIT 500`,
+    [userId]
+  )) as EngagementEventRow[];
 
   if (events.length === 0) {
     return {
@@ -226,6 +240,7 @@ export function computeEngagement(userId: string): {
   }
 
   // Streak: số ngày liên tiếp có ít nhất 1 event (đếm từ hôm nay ngược lại)
+  // MySQL DATETIME trả về "YYYY-MM-DD HH:MM:SS" khi dateStrings: true
   const days = new Set(events.map((e) => e.occurred_at.split(" ")[0]));
   let streak = 0;
   const today = new Date();
@@ -234,7 +249,7 @@ export function computeEngagement(userId: string): {
     d.setDate(d.getDate() - i);
     const key = d.toISOString().split("T")[0];
     if (days.has(key)) streak++;
-    else if (i > 0) break; // hôm nay chưa có event vẫn tính (HS vừa mở)
+    else if (i > 0) break;
   }
 
   // Avg session minutes
@@ -253,7 +268,7 @@ export function computeEngagement(userId: string): {
   return {
     streak,
     avgSessionMinutes,
-    retryRate: 0, // TODO: compute từ submissions khi có
+    retryRate: 0,
     helpSeekingRate: Math.round(helpSeekingRate * 100) / 100,
     dropoutPerTask: Math.round(dropoutPerTask * 100) / 100,
     lastActive: events[0].occurred_at,

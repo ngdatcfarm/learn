@@ -1,5 +1,5 @@
 /**
- * server/questionBank.ts — Kho câu hỏi (Template + Content Engine)
+ * server/questionBank.ts — Kho câu hỏi (Template + Content Engine) — MySQL
  *
  * Quyết định đã chốt:
  *   - B: Auto-archive + tag chất lượng (quality_score auto-computed)
@@ -11,32 +11,51 @@
  *   - GET  /api/question-bank/:id       — Chi tiết
  *   - POST /api/question-bank/:id/share — Publish lên kho chung
  *   - POST /api/question-bank/:id/use   — Track lượt dùng (cập nhật usage_count)
+ *
+ * Khác biệt với SQLite:
+ *   - Async/await
+ *   - Dynamic SQL giữ nguyên pattern (build sql + params, dùng `?` placeholder)
  */
 
 import { Router, Request, Response } from "express";
 import crypto from "node:crypto";
-import { getDb } from "../db/client";
+import { query, queryOne, RowDataPacket, ResultSetHeader } from "../db/client";
 import { requireUser, requireRole } from "./auth";
 
 export const questionBankRouter = Router();
+
+interface QuestionRow extends RowDataPacket {
+  id: string;
+  owner_id: string;
+  is_shared: number;
+  template_type: string;
+  topic: string | null;
+  level: string | null;
+  content_json: string;
+  quality_score: number;
+  usage_count: number;
+  success_rate: number | null;
+  avg_duration_ms: number | null;
+  created_at: string;
+  updated_at: string;
+}
 
 /**
  * GET /api/question-bank?type=reading&topic=Travel
  * Teacher: thấy câu riêng + câu shared
  * Admin: thấy tất cả
+ * HS/PH: chỉ xem câu shared
  */
-questionBankRouter.get("/", (req: Request, res: Response) => {
-  const user = requireUser(req, res);
+questionBankRouter.get("/", async (req: Request, res: Response) => {
+  const user = await requireUser(req, res);
   if (!user) return;
 
-  const db = getDb();
   const { type, topic, shared } = req.query;
 
   let sql = `SELECT * FROM question_bank WHERE 1=1`;
   const params: any[] = [];
 
   if (user.role === "teacher") {
-    // GV thấy câu của mình + câu shared (kho chung)
     sql += ` AND (owner_id = ? OR is_shared = 1)`;
     params.push(user.id);
   } else if (user.role === "admin") {
@@ -60,7 +79,7 @@ questionBankRouter.get("/", (req: Request, res: Response) => {
 
   sql += ` ORDER BY quality_score DESC, created_at DESC LIMIT 200`;
 
-  const rows = db.prepare(sql).all(...params) as any[];
+  const rows = (await query<QuestionRow[]>(sql, params)) as QuestionRow[];
 
   res.json({
     items: rows.map((r) => ({
@@ -76,8 +95,8 @@ questionBankRouter.get("/", (req: Request, res: Response) => {
  * Body: { template_type, topic, level, content }
  * Teacher tạo câu hỏi mới
  */
-questionBankRouter.post("/", (req: Request, res: Response) => {
-  const user = requireRole(req, res, ["teacher", "admin"]);
+questionBankRouter.post("/", async (req: Request, res: Response) => {
+  const user = await requireRole(req, res, ["teacher", "admin"]);
   if (!user) return;
 
   const { template_type, topic, level, content } = req.body || {};
@@ -86,12 +105,11 @@ questionBankRouter.post("/", (req: Request, res: Response) => {
   }
 
   const id = crypto.randomUUID();
-  getDb()
-    .prepare(
-      `INSERT INTO question_bank (id, owner_id, template_type, topic, level, content_json)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    )
-    .run(id, user.id, template_type, topic || null, level || null, JSON.stringify(content));
+  await query<ResultSetHeader>(
+    `INSERT INTO question_bank (id, owner_id, template_type, topic, level, content_json)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [id, user.id, template_type, topic || null, level || null, JSON.stringify(content)]
+  );
 
   res.json({ ok: true, id });
 });
@@ -99,13 +117,14 @@ questionBankRouter.post("/", (req: Request, res: Response) => {
 /**
  * GET /api/question-bank/:id
  */
-questionBankRouter.get("/:id", (req: Request, res: Response) => {
-  const user = requireUser(req, res);
+questionBankRouter.get("/:id", async (req: Request, res: Response) => {
+  const user = await requireUser(req, res);
   if (!user) return;
 
-  const row = getDb()
-    .prepare("SELECT * FROM question_bank WHERE id = ?")
-    .get(req.params.id) as any;
+  const row = await queryOne<QuestionRow>(
+    "SELECT * FROM question_bank WHERE id = ?",
+    [req.params.id]
+  );
 
   if (!row) return res.status(404).json({ error: "Câu hỏi không tồn tại." });
 
@@ -124,22 +143,24 @@ questionBankRouter.get("/:id", (req: Request, res: Response) => {
  * POST /api/question-bank/:id/share
  * Publish lên kho chung
  */
-questionBankRouter.post("/:id/share", (req: Request, res: Response) => {
-  const user = requireRole(req, res, ["teacher", "admin"]);
+questionBankRouter.post("/:id/share", async (req: Request, res: Response) => {
+  const user = await requireRole(req, res, ["teacher", "admin"]);
   if (!user) return;
 
-  const row = getDb()
-    .prepare("SELECT owner_id, is_shared FROM question_bank WHERE id = ?")
-    .get(req.params.id) as any;
+  const row = await queryOne<QuestionRow>(
+    "SELECT owner_id, is_shared FROM question_bank WHERE id = ?",
+    [req.params.id]
+  );
 
   if (!row) return res.status(404).json({ error: "Câu hỏi không tồn tại." });
   if (row.owner_id !== user.id && user.role !== "admin") {
     return res.status(403).json({ error: "Bạn không sở hữu câu này." });
   }
 
-  getDb()
-    .prepare("UPDATE question_bank SET is_shared = 1, updated_at = datetime('now') WHERE id = ?")
-    .run(req.params.id);
+  await query<ResultSetHeader>(
+    "UPDATE question_bank SET is_shared = 1, updated_at = NOW() WHERE id = ?",
+    [req.params.id]
+  );
 
   res.json({ ok: true });
 });
@@ -148,13 +169,14 @@ questionBankRouter.post("/:id/share", (req: Request, res: Response) => {
  * POST /api/question-bank/:id/use
  * Track 1 lượt sử dụng (gọi khi HS làm bài)
  */
-questionBankRouter.post("/:id/use", (req: Request, res: Response) => {
-  const user = requireUser(req, res);
+questionBankRouter.post("/:id/use", async (req: Request, res: Response) => {
+  const user = await requireUser(req, res);
   if (!user) return;
 
-  getDb()
-    .prepare("UPDATE question_bank SET usage_count = usage_count + 1 WHERE id = ?")
-    .run(req.params.id);
+  await query<ResultSetHeader>(
+    "UPDATE question_bank SET usage_count = usage_count + 1 WHERE id = ?",
+    [req.params.id]
+  );
 
   res.json({ ok: true });
 });

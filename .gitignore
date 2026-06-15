@@ -10,9 +10,5 @@ coverage/
 # Claude Code local settings
 .claude/
 
-# SQLite database (chứa dữ liệu HS — KHÔNG commit)
-data/*.db
-data/*.db-journal
-data/*.db-wal
-data/*.db-shm
-data/*.db.backup
+# Local data dir (không còn dùng sau khi chuyển sang MySQL)
+data/

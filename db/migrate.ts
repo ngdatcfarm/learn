@@ -1,10 +1,16 @@
 /**
- * db/migrate.ts — Apply schema + track version
+ * db/migrate.ts — Apply schema + track version (MySQL)
  *
  * Idempotent: chạy nhiều lần an toàn.
  * - Tạo bảng schema_migrations nếu chưa có
- * - Apply db/schema.sql (CREATE TABLE IF NOT EXISTS → không phá data)
+ * - Split db/schema.sql thành từng statement (theo `;`)
+ * - Execute từng statement qua connection pool
  * - Insert version=1 với name="initial" nếu chưa có
+ *
+ * Khác biệt với SQLite:
+ * - MySQL không có `db.exec()` cho multi-statement
+ * - Mỗi statement phải chạy riêng qua pool.execute()
+ * - Cần split SQL cẩn thận (handle strings, comments)
  *
  * Cách dùng:
  *   npm run db:migrate
@@ -17,7 +23,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { getDb } from "./client";
+import { getPool, closePool, RowDataPacket } from "./client";
 
 const SCHEMA_DIR = path.join(process.cwd(), "db");
 const SCHEMA_FILE = path.join(SCHEMA_DIR, "schema.sql");
@@ -25,54 +31,158 @@ const SCHEMA_FILE = path.join(SCHEMA_DIR, "schema.sql");
 interface Migration {
   version: number;
   name: string;
-  apply: () => void;
+  apply: () => Promise<void>;
+}
+
+/**
+ * Split SQL file thành mảng statement. Tôn trọng:
+ * - String literals: '...' và "..." và `...`
+ * - Line comment: -- ...
+ * - Block comment: /* ... *\/
+ * - Escape character: \\' bên trong string
+ */
+function splitSqlStatements(sql: string): string[] {
+  const statements: string[] = [];
+  let current = "";
+  let inString = false;
+  let stringChar = "";
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let i = 0; i < sql.length; i++) {
+    const c = sql[i];
+    const next = sql[i + 1];
+
+    // Trong line comment
+    if (inLineComment) {
+      current += c;
+      if (c === "\n") inLineComment = false;
+      continue;
+    }
+
+    // Trong block comment
+    if (inBlockComment) {
+      current += c;
+      if (c === "*" && next === "/") {
+        current += next;
+        i++;
+        inBlockComment = false;
+      }
+      continue;
+    }
+
+    // Trong string literal
+    if (inString) {
+      current += c;
+      if (c === "\\" && (next === "'" || next === '"' || next === "`")) {
+        current += next;
+        i++;
+        continue;
+      }
+      if (c === stringChar) {
+        inString = false;
+      }
+      continue;
+    }
+
+    // Bắt đầu line comment
+    if (c === "-" && next === "-") {
+      inLineComment = true;
+      current += c;
+      continue;
+    }
+
+    // Bắt đầu block comment
+    if (c === "/" && next === "*") {
+      inBlockComment = true;
+      current += c;
+      continue;
+    }
+
+    // Bắt đầu string
+    if (c === "'" || c === '"' || c === "`") {
+      inString = true;
+      stringChar = c;
+      current += c;
+      continue;
+    }
+
+    // Kết thúc statement
+    if (c === ";") {
+      current += c;
+      const trimmed = current.trim();
+      if (trimmed && trimmed !== ";") statements.push(trimmed);
+      current = "";
+      continue;
+    }
+
+    current += c;
+  }
+
+  const last = current.trim();
+  if (last) statements.push(last);
+
+  return statements;
 }
 
 const MIGRATIONS: Migration[] = [
   {
     version: 1,
     name: "initial",
-    apply: () => {
-      const db = getDb();
+    apply: async () => {
       const sql = fs.readFileSync(SCHEMA_FILE, "utf-8");
-      db.exec(sql);
+      const statements = splitSqlStatements(sql);
+      const pool = getPool();
+      // Dùng connection riêng để áp dụng toàn bộ statements
+      // Nếu 1 cái fail → rollback, không apply nửa vời
+      const conn = await pool.getConnection();
+      try {
+        await conn.beginTransaction();
+        for (const stmt of statements) {
+          await conn.query(stmt);
+        }
+        await conn.commit();
+      } catch (err) {
+        await conn.rollback();
+        throw err;
+      } finally {
+        conn.release();
+      }
     },
   },
 ];
 
-function ensureMigrationsTable(): void {
-  const db = getDb();
-  db.exec(`
+async function ensureMigrationsTable(): Promise<void> {
+  const pool = getPool();
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
-      version     INTEGER PRIMARY KEY,
-      name        TEXT NOT NULL,
-      applied_at  TEXT NOT NULL DEFAULT (datetime('now'))
-    );
+      version     INT          NOT NULL,
+      name        VARCHAR(64)  NOT NULL,
+      applied_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (version)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 }
 
-function getAppliedVersions(): Set<number> {
-  const db = getDb();
-  const rows = db
-    .prepare("SELECT version FROM schema_migrations ORDER BY version")
-    .all() as { version: number }[];
-  return new Set(rows.map((r) => r.version));
+async function getAppliedVersions(): Promise<Set<number>> {
+  const rows = (await getPool().query(
+    "SELECT version FROM schema_migrations ORDER BY version"
+  )) as RowDataPacket[];
+  return new Set(rows.map((r) => r.version as number));
 }
 
-function applyMigration(m: Migration): void {
-  const db = getDb();
-  const txn = db.transaction(() => {
-    m.apply();
-    db.prepare(
-      "INSERT INTO schema_migrations (version, name) VALUES (?, ?)"
-    ).run(m.version, m.name);
-  });
-  txn();
+async function applyMigration(m: Migration): Promise<void> {
+  const pool = getPool();
+  await m.apply();
+  await pool.query(
+    "INSERT INTO schema_migrations (version, name) VALUES (?, ?)",
+    [m.version, m.name]
+  );
 }
 
-export function migrate(): { applied: string[]; skipped: string[] } {
-  ensureMigrationsTable();
-  const applied = getAppliedVersions();
+export async function migrate(): Promise<{ applied: string[]; skipped: string[] }> {
+  await ensureMigrationsTable();
+  const applied = await getAppliedVersions();
   const justApplied: string[] = [];
   const skipped: string[] = [];
 
@@ -80,7 +190,7 @@ export function migrate(): { applied: string[]; skipped: string[] } {
     if (applied.has(m.version)) {
       skipped.push(`v${m.version} (${m.name})`);
     } else {
-      applyMigration(m);
+      await applyMigration(m);
       justApplied.push(`v${m.version} (${m.name})`);
     }
   }
@@ -88,24 +198,35 @@ export function migrate(): { applied: string[]; skipped: string[] } {
   return { applied: justApplied, skipped };
 }
 
+// ============================================================
 // Nếu chạy trực tiếp file này → apply và in kết quả
+// ============================================================
 const isDirectRun =
   import.meta.url === `file:///${process.argv[1]}` ||
   process.argv[1]?.endsWith("migrate.ts") ||
   process.argv[1]?.endsWith("migrate.js");
 
 if (isDirectRun) {
-  console.log("🔧 Running migrations...\n");
-  const result = migrate();
-  if (result.applied.length > 0) {
-    console.log("✅ Applied:");
-    result.applied.forEach((m) => console.log(`   - ${m}`));
-  } else {
-    console.log("✓ No new migrations to apply.");
-  }
-  if (result.skipped.length > 0) {
-    console.log("\n⏭️  Already applied (skipped):");
-    result.skipped.forEach((m) => console.log(`   - ${m}`));
-  }
-  console.log("\n✨ Database ready at: data/learn.db");
+  (async () => {
+    try {
+      console.log("🔧 Running migrations...\n");
+      const result = await migrate();
+      if (result.applied.length > 0) {
+        console.log("✅ Applied:");
+        result.applied.forEach((m) => console.log(`   - ${m}`));
+      } else {
+        console.log("✓ No new migrations to apply.");
+      }
+      if (result.skipped.length > 0) {
+        console.log("\n⏭️  Already applied (skipped):");
+        result.skipped.forEach((m) => console.log(`   - ${m}`));
+      }
+      console.log("\n✨ Database ready.");
+    } catch (err: any) {
+      console.error("\n❌ Migration failed:", err.message);
+      process.exit(1);
+    } finally {
+      await closePool();
+    }
+  })();
 }

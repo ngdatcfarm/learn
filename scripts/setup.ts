@@ -1,39 +1,44 @@
 #!/usr/bin/env tsx
 /**
- * scripts/setup.ts — File thực thi DUY NHẤT để chuẩn bị môi trường.
+ * scripts/setup.ts — File thực thi DUY NHẤT để chuẩn bị môi trường (MySQL).
  *
  * Chạy được trên:
  *   - Windows (local dev):    npm run setup
  *   - Linux (cloud server):   npm run setup   (sau khi git pull)
  *
+ * Yêu cầu: file .env ở root project chứa:
+ *   MYSQL_HOST, MYSQL_PORT, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE
+ *   GEMINI_API_KEY (optional, cho AI features)
+ *
  * Chức năng (idempotent — chạy nhiều lần an toàn):
  *   1. Kiểm tra Node.js version (>= 20)
- *   2. Cài npm dependencies (nếu node_modules chưa có / lỗi)
- *   3. Tạo thư mục data/ (chứa SQLite file)
- *   4. Apply database migrations
- *   5. Seed admin account mặc định (nếu chưa có)
- *   6. Verify schema còn nguyên vẹn
- *   7. In hướng dẫn tiếp theo
+ *   2. Kiểm tra file .env có đủ thông tin MySQL
+ *   3. Cài npm dependencies (nếu node_modules chưa có / thiếu)
+ *   4. Test kết nối MySQL (ping)
+ *   5. Apply database migrations
+ *   6. Seed admin account mặc định (nếu chưa có)
+ *   7. Verify schema (đủ 12 tables)
+ *   8. In hướng dẫn tiếp theo
  *
  * Tại sao là 1 file?
- *   - Reproducible 100% — môi trường local và cloud luôn khớp
- *   - Dev mới vào team chỉ cần `git clone && npm run setup` là chạy được
- *   - Server deploy: git pull && npm run setup && pm2 restart
+ *   - Reproducible 100% — local và cloud luôn khớp
+ *   - Dev mới vào team chỉ cần `git clone && npm install && npm run setup`
+ *   - Server deploy: git pull && npm install && npm run setup && pm2 restart
  */
 
 import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import Database from "better-sqlite3";
+import "dotenv/config";
+import { getPool, queryOne, closePool, RowDataPacket } from "../db/client";
+import { migrate } from "../db/migrate";
 
 // ============================================================
 // CONFIG
 // ============================================================
 
 const REQUIRED_NODE_MAJOR = 20;
-const DATA_DIR = path.join(process.cwd(), "data");
-const DB_PATH = process.env.DB_PATH || path.join(DATA_DIR, "learn.db");
 
 // Default admin (chỉ dùng khi DB trống, bắt buộc đổi sau khi deploy)
 const DEFAULT_ADMIN = {
@@ -58,9 +63,13 @@ const c = {
 };
 
 function header(text: string): void {
-  console.log(`\n${c.bold}${c.cyan}╔══════════════════════════════════════════════════════════╗${c.reset}`);
+  console.log(
+    `\n${c.bold}${c.cyan}╔══════════════════════════════════════════════════════════╗${c.reset}`
+  );
   console.log(`${c.bold}${c.cyan}║${c.reset}  ${c.bold}${text}${c.reset}`);
-  console.log(`${c.bold}${c.cyan}╚══════════════════════════════════════════════════════════╝${c.reset}\n`);
+  console.log(
+    `${c.bold}${c.cyan}╚══════════════════════════════════════════════════════════╝${c.reset}\n`
+  );
 }
 
 function step(num: number, text: string): void {
@@ -99,27 +108,60 @@ function checkNodeVersion(): void {
   if (major < REQUIRED_NODE_MAJOR) {
     die(
       `Cần Node.js >= ${REQUIRED_NODE_MAJOR}. Bạn đang dùng ${full}.\n` +
-        `Cài lại từ: https://nodejs.org/  (LTS version)`
+        `    Cài lại từ: https://nodejs.org/  (LTS version)`
     );
   }
   ok(`Node.js ${full}`);
 }
 
 // ============================================================
-// STEP 2: npm install
+// STEP 2: Kiểm tra .env
+// ============================================================
+
+function checkEnv(): void {
+  step(2, "Kiểm tra file .env");
+
+  const envPath = path.join(process.cwd(), ".env");
+  if (!fs.existsSync(envPath)) {
+    die(
+      `Không thấy file .env ở ${envPath}.\n` +
+        `    Tạo file .env với nội dung:\n` +
+        `      MYSQL_HOST=...\n` +
+        `      MYSQL_PORT=3306\n` +
+        `      MYSQL_USER=...\n` +
+        `      MYSQL_PASSWORD=...\n` +
+        `      MYSQL_DATABASE=learn_cfarm\n` +
+        `    (Xem .env.example để biết đầy đủ)`
+    );
+  }
+  ok(`.env tồn tại`);
+
+  const required = ["MYSQL_HOST", "MYSQL_USER", "MYSQL_PASSWORD", "MYSQL_DATABASE"];
+  const missing: string[] = [];
+  for (const key of required) {
+    if (!process.env[key]) missing.push(key);
+  }
+  if (missing.length > 0) {
+    die(`Thiếu biến trong .env: ${missing.join(", ")}\n    Xem .env.example`);
+  }
+  ok(`Đủ 4 biến MySQL bắt buộc (HOST/USER/PASSWORD/DATABASE)`);
+  info(`Host:     ${process.env.MYSQL_HOST}:${process.env.MYSQL_PORT || 3306}`);
+  info(`Database: ${process.env.MYSQL_DATABASE}`);
+}
+
+// ============================================================
+// STEP 3: npm install
 // ============================================================
 
 function ensureDependencies(): void {
-  step(2, "Kiểm tra npm dependencies");
+  step(3, "Kiểm tra npm dependencies");
 
   const nodeModules = path.join(process.cwd(), "node_modules");
-  const hasBetterSqlite = fs.existsSync(
-    path.join(nodeModules, "better-sqlite3")
-  );
+  const hasMysql2 = fs.existsSync(path.join(nodeModules, "mysql2"));
   const hasExpress = fs.existsSync(path.join(nodeModules, "express"));
 
-  if (hasBetterSqlite && hasExpress && fs.existsSync(nodeModules)) {
-    ok(`node_modules đã có sẵn (better-sqlite3 + express OK)`);
+  if (hasMysql2 && hasExpress && fs.existsSync(nodeModules)) {
+    ok(`node_modules đã có sẵn (mysql2 + express OK)`);
     return;
   }
 
@@ -133,90 +175,89 @@ function ensureDependencies(): void {
 }
 
 // ============================================================
-// STEP 3: Tạo data/ directory
+// STEP 4: Test MySQL connection
 // ============================================================
 
-function ensureDataDir(): void {
-  step(3, "Tạo thư mục data/");
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-    ok(`Tạo mới: ${DATA_DIR}`);
-  } else {
-    ok(`Đã tồn tại: ${DATA_DIR}`);
-  }
-  if (!fs.existsSync(path.join(DATA_DIR, ".gitkeep"))) {
-    fs.writeFileSync(
-      path.join(DATA_DIR, ".gitkeep"),
-      "# Thư mục này chứa SQLite file (learn.db). KHÔNG commit learn.db vào git.\n"
+async function testConnection(): Promise<void> {
+  step(4, "Test kết nối MySQL");
+  try {
+    const conn = await getPool().getConnection();
+    await conn.ping();
+    const [rows] = await conn.query("SELECT VERSION() AS version, NOW() AS now");
+    conn.release();
+    const r = rows as RowDataPacket[];
+    ok(`Kết nối OK — MySQL ${r[0].version}`);
+    info(`Server time: ${r[0].now}`);
+  } catch (err: any) {
+    die(
+      `Không kết nối được MySQL.\n` +
+        `    Lỗi: ${err.message}\n` +
+        `    → Kiểm tra .env (host, user, password, database)\n` +
+        `    → Kiểm tra MySQL server có chạy không\n` +
+        `    → Kiểm tra database "${process.env.MYSQL_DATABASE}" đã tạo chưa (qua phpMyAdmin)`
     );
   }
 }
 
 // ============================================================
-// STEP 4: Apply migrations
+// STEP 5: Apply migrations
 // ============================================================
 
 async function applyMigrations(): Promise<void> {
-  step(4, "Apply database migrations");
-  // Import dynamically để tránh load native module nếu fail
-  const migrateModule = await import("../db/migrate.js");
-  const result = migrateModule.migrate();
+  step(5, "Apply database migrations");
+  const result = await migrate();
   if (result.applied.length > 0) {
-    result.applied.forEach((m: string) => ok(`Applied: ${m}`));
+    result.applied.forEach((m) => ok(`Applied: ${m}`));
   } else {
     ok("Schema đã đúng version — không cần apply gì thêm");
+  }
+  if (result.skipped.length > 0) {
+    info(`Skipped: ${result.skipped.join(", ")}`);
   }
 }
 
 // ============================================================
-// STEP 5: Seed admin (nếu chưa có)
+// STEP 6: Seed admin (nếu chưa có)
 // ============================================================
 
-function hashPassword(
-  password: string,
-  saltHex?: string
-): { hash: string; salt: string } {
-  const salt = saltHex || crypto.randomBytes(16).toString("hex");
+function hashPassword(password: string): { hash: string; salt: string } {
+  const salt = crypto.randomBytes(16).toString("hex");
   const hash = crypto.scryptSync(password, salt, 64).toString("hex");
   return { hash, salt };
 }
 
-function seedAdminIfNeeded(): void {
-  step(5, "Kiểm tra admin account");
-  const db = new Database(DB_PATH);
-  db.pragma("foreign_keys = ON");
+async function seedAdminIfNeeded(): Promise<void> {
+  step(6, "Kiểm tra admin account");
 
-  const existing = db
-    .prepare("SELECT id, username FROM users WHERE role = 'admin' LIMIT 1")
-    .get() as { id: string; username: string } | undefined;
+  const existing = await queryOne<RowDataPacket & { id: string; username: string }>(
+    "SELECT id, username FROM users WHERE role = 'admin' LIMIT 1"
+  );
 
   if (existing) {
     ok(`Admin đã tồn tại: ${c.bold}${existing.username}${c.reset}`);
-    db.close();
     return;
   }
 
   const id = crypto.randomUUID();
   const { hash, salt } = hashPassword(DEFAULT_ADMIN.password);
-  db.prepare(
+  await getPool().query(
     `INSERT INTO users (id, username, password_hash, password_salt, role, name)
-     VALUES (?, ?, ?, ?, 'admin', ?)`
-  ).run(id, DEFAULT_ADMIN.username, hash, salt, DEFAULT_ADMIN.name);
+     VALUES (?, ?, ?, ?, 'admin', ?)`,
+    [id, DEFAULT_ADMIN.username, hash, salt, DEFAULT_ADMIN.name]
+  );
 
   ok(`Tạo admin mặc định:`);
   info(`Username: ${c.bold}${DEFAULT_ADMIN.username}${c.reset}`);
   info(`Password: ${c.bold}${DEFAULT_ADMIN.password}${c.reset}`);
   warn("ĐỔI MẬT KHẨU NGAY sau khi deploy lên server thật!");
-  db.close();
 }
 
 // ============================================================
-// STEP 6: Verify schema
+// STEP 7: Verify schema
 // ============================================================
 
-function verifySchema(): void {
-  step(6, "Verify schema còn nguyên vẹn");
-  const db = new Database(DB_PATH, { readonly: true });
+async function verifySchema(): Promise<void> {
+  step(7, "Verify schema còn nguyên vẹn");
 
   const expectedTables = [
     "users",
@@ -233,32 +274,34 @@ function verifySchema(): void {
     "schema_migrations",
   ];
 
-  const rows = db
-    .prepare(
-      "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-    )
-    .all() as { name: string }[];
-  const existing = new Set(rows.map((r) => r.name));
+  const rows = (await getPool().query(
+    "SELECT TABLE_NAME AS name FROM information_schema.tables WHERE table_schema = ? ORDER BY TABLE_NAME",
+    [process.env.MYSQL_DATABASE]
+  )) as RowDataPacket[];
+
+  const existing = new Set(rows.map((r) => r.name as string));
   const missing = expectedTables.filter((t) => !existing.has(t));
 
   if (missing.length > 0) {
-    db.close();
-    die(`Thiếu tables: ${missing.join(", ")}. Chạy lại setup hoặc kiểm tra schema.sql`);
+    die(
+      `Thiếu tables: ${missing.join(", ")}.\n` +
+        `    Chạy lại setup hoặc kiểm tra db/schema.sql`
+    );
   }
   ok(`Đủ ${expectedTables.length} tables`);
 
   // Sanity check: admin có trong DB chưa
-  const adminCount = (db.prepare("SELECT COUNT(*) as c FROM users WHERE role='admin'").get() as { c: number }).c;
-  if (adminCount === 0) {
-    db.close();
+  const adminCount = (await queryOne<RowDataPacket & { c: number }>(
+    "SELECT COUNT(*) AS c FROM users WHERE role='admin'"
+  )) as { c: number } | undefined;
+  if (!adminCount || adminCount.c === 0) {
     die("Không tìm thấy admin account. Có thể seed bị lỗi.");
   }
-  ok(`Admin count: ${adminCount}`);
-  db.close();
+  ok(`Admin count: ${adminCount.c}`);
 }
 
 // ============================================================
-// STEP 7: Print next steps
+// STEP 8: Print next steps
 // ============================================================
 
 function printNextSteps(): void {
@@ -272,15 +315,20 @@ function printNextSteps(): void {
   console.log(`  ${c.cyan}npm start${c.reset}          — Run production server`);
   console.log(`  ${c.dim}(Hoặc dùng PM2: pm2 start npm --name learn -- start)${c.reset}\n`);
 
-  console.log(`${c.bold}Database:${c.reset}`);
-  console.log(`  File:  ${c.dim}${DB_PATH}${c.reset}`);
-  console.log(`  Backup đơn giản: ${c.cyan}cp data/learn.db data/learn.db.backup${c.reset}\n`);
+  console.log(`${c.bold}Database (MySQL):${c.reset}`);
+  console.log(`  Host:     ${c.dim}${process.env.MYSQL_HOST}${c.reset}`);
+  console.log(`  Database: ${c.dim}${process.env.MYSQL_DATABASE}${c.reset}`);
+  console.log(`  Backup:   dùng phpMyAdmin → Export → SQL\n`);
 
   console.log(`${c.bold}Admin login:${c.reset}`);
   console.log(`  Username: ${c.bold}${DEFAULT_ADMIN.username}${c.reset}`);
-  console.log(`  Password: ${c.bold}${DEFAULT_ADMIN.password}${c.reset}  ${c.yellow}(đổi sau khi deploy!)${c.reset}\n`);
+  console.log(
+    `  Password: ${c.bold}${DEFAULT_ADMIN.password}${c.reset}  ${c.yellow}(đổi sau khi deploy!)${c.reset}\n`
+  );
 
-  console.log(`${c.dim}Để xem các câu lệnh hữu ích: cat package.json | grep -A10 scripts${c.reset}\n`);
+  console.log(
+    `${c.dim}Để xem các câu lệnh hữu ích: cat package.json | grep -A10 scripts${c.reset}\n`
+  );
 }
 
 // ============================================================
@@ -288,22 +336,27 @@ function printNextSteps(): void {
 // ============================================================
 
 async function main(): Promise<void> {
-  header("Tiếng Anh của mình — Setup");
+  header("Tiếng Anh của mình — Setup (MySQL)");
   info(`Working dir: ${process.cwd()}`);
   info(`Platform:    ${process.platform} (${process.arch})`);
   info(`Node:        ${process.versions.node}\n`);
 
   checkNodeVersion();
+  checkEnv();
   ensureDependencies();
-  ensureDataDir();
+  await testConnection();
   await applyMigrations();
-  seedAdminIfNeeded();
-  verifySchema();
+  await seedAdminIfNeeded();
+  await verifySchema();
   printNextSteps();
 }
 
-try {
-  main();
-} catch (err: any) {
-  die(err?.message || String(err));
-}
+(async () => {
+  try {
+    await main();
+  } catch (err: any) {
+    die(err?.message || String(err));
+  } finally {
+    await closePool();
+  }
+})();

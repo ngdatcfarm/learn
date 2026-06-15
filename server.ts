@@ -1,14 +1,15 @@
 /**
- * server.ts — Express entry point
+ * server.ts — Express entry point (MySQL)
  *
  * Khởi động:
- *   1. Verify DB đã sẵn sàng (nếu chưa → gợi ý chạy `npm run setup`)
+ *   1. Verify DB đã sẵn sàng (ping MySQL — nếu fail → gợi ý chạy `npm run setup`)
  *   2. Mount Vite dev middleware (dev) hoặc serve static (prod)
- *   3. Mount API routes (auth, skills, engagement, dashboards)
+ *   3. Mount API routes (auth, skills, engagement, dashboard, questionBank, ai)
  *   4. Start listening
  *
  * Sau khi pull code mới lên server:
- *   npm run setup    (idempotent, an toàn)
+ *   npm install              (nếu package.json đổi)
+ *   npm run setup            (idempotent, an toàn)
  *   pm2 restart learn
  */
 
@@ -18,7 +19,7 @@ import fs from "node:fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
-import { getDb } from "./db/client";
+import { getPool, pingDb } from "./db/client";
 import { migrate } from "./db/migrate";
 import { authRouter } from "./server/auth";
 import { skillsRouter } from "./server/skills";
@@ -33,20 +34,20 @@ const app = express();
 const PORT = parseInt(process.env.PORT || "3000", 10);
 
 // ============================================================
-// DB initialization (chạy migrations nếu chưa)
+// DB initialization (test connection + chạy migrations nếu chưa)
 // ============================================================
-try {
-  const dbPath = path.join(process.cwd(), "data", "learn.db");
-  if (!fs.existsSync(dbPath)) {
-    console.warn("⚠️  Database chưa tồn tại. Chạy `npm run setup` trước khi start server.");
-  } else {
-    migrate();
-    getDb(); // mở connection
-    console.log("✓ Database connected");
+async function initDb(): Promise<void> {
+  const ok = await pingDb();
+  if (!ok) {
+    console.error(
+      "✗ Không kết nối được MySQL. Kiểm tra .env hoặc chạy `npm run setup`."
+    );
+    process.exit(1);
   }
-} catch (err) {
-  console.error("✗ Database init failed:", err);
-  process.exit(1);
+  await migrate();
+  // Touch pool để log "ready"
+  await getPool().query("SELECT 1");
+  console.log("✓ MySQL connected");
 }
 
 // ============================================================
@@ -136,4 +137,15 @@ async function startServer() {
   });
 }
 
-startServer();
+// ============================================================
+// Bootstrap
+// ============================================================
+(async () => {
+  try {
+    await initDb();
+    await startServer();
+  } catch (err: any) {
+    console.error("Fatal startup error:", err);
+    process.exit(1);
+  }
+})();
