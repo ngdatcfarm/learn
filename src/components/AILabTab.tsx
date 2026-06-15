@@ -11,13 +11,15 @@ import {
 } from "lucide-react";
 import { ChatMessage, UserProfile } from "../types";
 import sound from "../utils/sound";
+import { getToken, recordMeasurement, trackEvent } from "../api/client";
 
 interface AILabTabProps {
   profile: UserProfile;
   setProfile: (p: UserProfile) => void;
+  onMeasured: () => Promise<void>;
 }
 
-export default function AILabTab({ profile, setProfile }: AILabTabProps) {
+export default function AILabTab({ profile, setProfile, onMeasured }: AILabTabProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: "init-1",
@@ -59,9 +61,13 @@ export default function AILabTab({ profile, setProfile }: AILabTabProps) {
     setIsTyping(true);
 
     try {
+      const token = getToken();
       const response = await fetch("/api/tutor/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ messages: updatedMessages, userProfile: profile }),
       });
 
@@ -78,29 +84,17 @@ export default function AILabTab({ profile, setProfile }: AILabTabProps) {
 
       setMessages((prev) => [...prev, newBotMessage]);
 
-      setProfile({
-        ...profile,
-        stars: profile.stars + 10,
-        skills: {
-          ...profile.skills,
-          // Mỗi lượt chat = 1 lần thực hành speak
-          speak: {
-            ...profile.skills.speak,
-            attempts: profile.skills.speak.attempts + 1,
-            lastMeasured: new Date().toISOString(),
-          },
-          // Chat cũng là cơ hội dùng từ vựng active
-          learn: {
-            ...profile.skills.learn,
-            vocabActiveUse: profile.skills.learn.vocabActiveUse + 1,
-            attempts: profile.skills.learn.attempts + 1,
-          },
-        },
-        engagement: {
-          ...profile.engagement,
-          lastActive: new Date().toISOString(),
-        },
-      });
+      // Optimistic +stars (client-side gamification, instant feedback)
+      setProfile({ ...profile, stars: profile.stars + 10 });
+
+      // Server: mỗi lượt chat = 1 attempt speak + 1 vocabActiveUse
+      void Promise.allSettled([
+        recordMeasurement({ skill: "speak", metric: "speakFluency", value: 1 }),
+        recordMeasurement({ skill: "learn", metric: "vocabActiveUse", value: 1 }),
+        trackEvent("task_done"),
+      ])
+        .then(() => onMeasured())
+        .catch((e) => console.warn("AILab measurement failed:", e));
     } catch (err: any) {
       console.error("Chat fetch error:", err);
       setErrorMessage("Mất kết nối với AI rồi 😅 — mình đang dùng chế độ offline tạm thời nhé.");
@@ -138,9 +132,13 @@ export default function AILabTab({ profile, setProfile }: AILabTabProps) {
     setAnalysisOutputs((prev) => ({ ...prev, [storageKey]: "Mình đang xem nhé..." }));
 
     try {
+      const token = getToken();
       const response = await fetch("/api/tutor/analyze", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ action: actionType, text: msg.content }),
       });
 

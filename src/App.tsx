@@ -1,4 +1,4 @@
-import { useState, useEffect, createContext, useContext } from "react";
+import { useState, useEffect, useRef, createContext, useContext } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Bot,
@@ -27,6 +27,7 @@ import {
   getMe,
   getMySkills,
   logout as apiLogout,
+  trackEvent,
   SkillsResponse,
   SkillState,
 } from "./api/client";
@@ -118,6 +119,8 @@ export default function App() {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [theme, setTheme] = useState<Theme>("dark");
+  // Ref track session start time cho session_end
+  const sessionStartRef = useRef<number | null>(null);
 
   // ============================================================
   // Auth bootstrap: check localStorage token → verify → load skills
@@ -189,6 +192,92 @@ export default function App() {
       console.error("Failed to load UI state:", e);
     }
   }, []);
+
+  // ============================================================
+  // Session tracking: trackEvent("session_start") khi user login,
+  // trackEvent("session_end", minutes) khi tab ẩn / user logout
+  //
+  // Lưu ý: fetch keepalive KHÔNG gửi được custom header trên nhiều browser
+  // → khi user đóng tab đột ngột, session_end có thể bị miss.
+  // Server sẽ tự dedup + analytics sẽ bỏ qua session cuối cùng incomplete.
+  // ============================================================
+  useEffect(() => {
+    if (!user) {
+      sessionStartRef.current = null;
+      return;
+    }
+
+    // Bắt đầu session
+    sessionStartRef.current = Date.now();
+    trackEvent("session_start").catch((e) =>
+      console.warn("trackEvent session_start failed:", e)
+    );
+
+    const sendSessionEnd = (reason: "visibility" | "unload" | "logout") => {
+      const start = sessionStartRef.current;
+      if (start == null) return;
+      const minutes = Math.max(0, Math.round((Date.now() - start) / 60000));
+      sessionStartRef.current = null;
+      // best-effort: nếu đang unload, dùng keepalive (có thể miss trên Safari)
+      if (reason === "unload" && typeof fetch !== "undefined") {
+        try {
+          fetch("/api/engagement/track", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${getToken() ?? ""}`,
+            },
+            body: JSON.stringify({ event: "session_end", value: minutes }),
+            keepalive: true,
+          }).catch(() => {});
+        } catch {
+          // ignore
+        }
+      } else {
+        trackEvent("session_end", minutes).catch(() => {});
+      }
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        sendSessionEnd("visibility");
+      } else if (document.visibilityState === "visible" && sessionStartRef.current == null) {
+        // Tab visible lại sau khi đã end → bắt đầu session mới
+        sessionStartRef.current = Date.now();
+        trackEvent("session_start").catch(() => {});
+      }
+    };
+
+    const onBeforeUnload = () => {
+      sendSessionEnd("unload");
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("beforeunload", onBeforeUnload);
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      // Cleanup khi user logout / unmount: gửi session_end
+      sendSessionEnd("logout");
+    };
+  }, [user]);
+
+  // ============================================================
+  // refreshSkills: child components gọi sau khi recordMeasurement
+  // → re-fetch skills + engagement từ server, merge vào profile
+  // ============================================================
+  const refreshSkills = async () => {
+    try {
+      const res = await getMySkills();
+      const mapped = mapSkillsResponse(res);
+      setProfile((prev) =>
+        prev ? { ...prev, skills: mapped.skills, engagement: mapped.engagement } : prev
+      );
+    } catch (e) {
+      console.warn("refreshSkills failed:", e);
+    }
+  };
 
   const handleLoginSuccess = (u: ApiUser) => {
     setUser(u);
@@ -383,7 +472,7 @@ export default function App() {
                 exit={{ opacity: 0, y: -8 }}
                 transition={{ duration: 0.2 }}
               >
-                <Dashboard profile={profile} setProfile={handleUpdateProfile} onNavigate={setActiveTab} />
+                <Dashboard profile={profile} setProfile={handleUpdateProfile} onNavigate={setActiveTab} onMeasured={refreshSkills} />
               </motion.div>
             )}
             {activeTab === "courses" && (
@@ -394,7 +483,7 @@ export default function App() {
                 exit={{ opacity: 0, y: -8 }}
                 transition={{ duration: 0.2 }}
               >
-                <CoursesTab onStartChat={() => setActiveTab("ailab")} />
+                <CoursesTab onStartChat={() => setActiveTab("ailab")} onMeasured={refreshSkills} />
               </motion.div>
             )}
             {activeTab === "ailab" && (
@@ -405,7 +494,7 @@ export default function App() {
                 exit={{ opacity: 0, y: -8 }}
                 transition={{ duration: 0.2 }}
               >
-                <AILabTab profile={profile} setProfile={handleUpdateProfile} />
+                <AILabTab profile={profile} setProfile={handleUpdateProfile} onMeasured={refreshSkills} />
               </motion.div>
             )}
           </AnimatePresence>

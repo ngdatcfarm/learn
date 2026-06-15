@@ -12,9 +12,11 @@ import {
 } from "lucide-react";
 import { COURSES_DATA } from "../data/coursesData";
 import sound from "../utils/sound";
+import { recordMeasurement, trackEvent } from "../api/client";
 
 interface CoursesTabProps {
   onStartChat: () => void;
+  onMeasured: () => Promise<void>;
 }
 
 const difficultyStyle: Record<string, { bg: string; fg: string; bd: string; emoji: string }> = {
@@ -31,7 +33,7 @@ const categoryEmoji: Record<string, string> = {
   Vocabulary: "🔤",
 };
 
-export default function CoursesTab({ onStartChat }: CoursesTabProps) {
+export default function CoursesTab({ onStartChat, onMeasured }: CoursesTabProps) {
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
   const [currentCardIndex, setCurrentCardIndex] = useState<number>(0);
 
@@ -63,6 +65,8 @@ export default function CoursesTab({ onStartChat }: CoursesTabProps) {
     sound.playClick();
     setSelectedCourseId(courseId);
     setCurrentCardIndex(0);
+    // Note: trackEvent type hiện không có "task_start" → bỏ qua tracking ở đây
+    // (lượt "next" bên dưới sẽ ghi task_done, đủ cho daily progress)
   };
 
   const handleNextCard = () => {
@@ -73,6 +77,14 @@ export default function CoursesTab({ onStartChat }: CoursesTabProps) {
       setSelectedCourseId(null);
       setCurrentCardIndex(0);
     }
+    // Ghi nhận: HS đã "dùng" 1 vocab (active recall — thấy + nghe + đọc example)
+    void Promise.allSettled([
+      recordMeasurement({ skill: "learn", metric: "vocabActiveUse", value: 1 }),
+      recordMeasurement({ skill: "learn", metric: "vocabKnown", value: 1 }),
+      trackEvent("task_done"),
+    ])
+      .then(() => onMeasured())
+      .catch(() => {});
   };
 
   return (

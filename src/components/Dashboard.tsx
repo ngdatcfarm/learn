@@ -18,14 +18,16 @@ import {
 import { UserProfile, ReadingExercise, SKILL_META, SkillId } from "../types";
 import { READING_EXERCISES } from "../data/coursesData";
 import sound from "../utils/sound";
+import { recordMeasurement, trackEvent } from "../api/client";
 
 interface DashboardProps {
   profile: UserProfile;
   setProfile: (p: UserProfile) => void;
   onNavigate: (tab: "dashboard" | "courses" | "ailab") => void;
+  onMeasured: () => Promise<void>;
 }
 
-export default function Dashboard({ profile, setProfile, onNavigate }: DashboardProps) {
+export default function Dashboard({ profile, setProfile, onNavigate, onMeasured }: DashboardProps) {
   const [selectedReadId, setSelectedReadId] = useState<string | null>(null);
   const [userAnswers, setUserAnswers] = useState<Record<string, string>>({});
   const [readFeedbacks, setReadFeedbacks] = useState<Record<string, { isCorrect: boolean; checked: boolean }>>({});
@@ -38,67 +40,33 @@ export default function Dashboard({ profile, setProfile, onNavigate }: Dashboard
     setUserAnswers((prev) => ({ ...prev, [exId]: option }));
   };
 
-  const handleCheckAnswer = (ex: ReadingExercise) => {
+  const handleCheckAnswer = async (ex: ReadingExercise) => {
     const selected = userAnswers[ex.id];
     if (!selected) return;
     const isCorrect = selected === ex.correctAnswer;
     if (isCorrect) {
       sound.playSuccess();
-      setProfile({
-        ...profile,
-        stars: profile.stars + 15,
-        skills: {
-          ...profile.skills,
-          // Đúng 1 câu đọc = cập nhật read metrics
-          read: {
-            ...profile.skills.read,
-            readComprehension: Math.min(
-              100,
-              profile.skills.read.attempts > 0
-                ? Math.round(
-                    (profile.skills.read.readComprehension * profile.skills.read.attempts + 100) /
-                      (profile.skills.read.attempts + 1)
-                  )
-                : 100
-            ),
-            readVocabInContext: Math.min(
-              100,
-              profile.skills.read.attempts > 0
-                ? Math.round(
-                    (profile.skills.read.readVocabInContext * profile.skills.read.attempts + 80) /
-                      (profile.skills.read.attempts + 1)
-                  )
-                : 80
-            ),
-            attempts: profile.skills.read.attempts + 1,
-            lastMeasured: new Date().toISOString(),
-            trend: "improving",
-          },
-          // Học vocab mới = cập nhật learn
-          learn: {
-            ...profile.skills.learn,
-            vocabKnown: profile.skills.learn.vocabKnown + ex.vocabWords.length,
-            vocabRetention: Math.min(
-              100,
-              profile.skills.learn.vocabRetention > 0
-                ? Math.round(
-                    (profile.skills.learn.vocabRetention * profile.skills.learn.attempts + 100) /
-                      (profile.skills.learn.attempts + 1)
-                  )
-                : 100
-            ),
-            attempts: profile.skills.learn.attempts + 1,
-            lastMeasured: new Date().toISOString(),
-            trend: "improving",
-          },
-        },
-        engagement: {
-          ...profile.engagement,
-          lastActive: new Date().toISOString(),
-        },
-      });
+      // Optimistic +stars (client-side gamification, instant feedback)
+      setProfile({ ...profile, stars: profile.stars + 15 });
+      // Server: ghi measurements + event song song (fire-and-forget)
+      void Promise.allSettled([
+        recordMeasurement({ skill: "read", metric: "readComprehension", value: 100 }),
+        recordMeasurement({ skill: "read", metric: "readVocabInContext", value: 80 }),
+        recordMeasurement({ skill: "learn", metric: "vocabKnown", value: ex.vocabWords.length }),
+        recordMeasurement({ skill: "learn", metric: "vocabRetention", value: 100 }),
+        trackEvent("task_done"),
+      ])
+        .then(() => onMeasured())
+        .catch((e) => console.warn("Dashboard measurement failed:", e));
     } else {
       sound.playIncorrect();
+      // Sai vẫn record (value=0) + track "đã thử"
+      void Promise.allSettled([
+        recordMeasurement({ skill: "read", metric: "readComprehension", value: 0 }),
+        trackEvent("task_done"),
+      ])
+        .then(() => onMeasured())
+        .catch(() => {});
     }
     setReadFeedbacks((prev) => ({ ...prev, [ex.id]: { isCorrect, checked: true } }));
   };
