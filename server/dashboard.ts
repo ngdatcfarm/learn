@@ -1,8 +1,9 @@
 /**
  * server/dashboard.ts — Teacher + Parent dashboards (MySQL)
  *
- * GET /api/dashboard/teacher/:classId  — Danh sách HS trong lớp + status
- * GET /api/dashboard/parent            — Danh sách con + skills summary
+ * GET /api/dashboard/teacher            — Auto-resolve lớp đầu tiên của GV
+ * GET /api/dashboard/teacher/:classId   — Explicit classId
+ * GET /api/dashboard/parent             — Danh sách con + skills summary
  *
  * Khác biệt với SQLite:
  *   - Async/await
@@ -12,7 +13,7 @@
 
 import { Router, Request, Response } from "express";
 import { query, queryOne, RowDataPacket } from "../db/client";
-import { requireUser, requireRole } from "./auth";
+import { requireRole, AuthUser } from "./auth";
 import { computeCurrentSkills, computeEngagement } from "./skills";
 
 export const dashboardRouter = Router();
@@ -34,6 +35,104 @@ interface StudentRow extends RowDataPacket {
   joined_at: string;
 }
 
+interface ActivityRow {
+  task_done_today: number;
+  minutes_today: number;
+  measurements_today: number;
+}
+
+/**
+ * Hoạt động trong ngày của 1 HS — dùng cho Teacher matrix
+ *  - task_done_today: số task_done hôm nay
+ *  - minutes_today:    tổng phút session hôm nay (từ session_end events)
+ *  - measurements_today: số skill_measurements hôm nay
+ */
+async function getTodayActivity(userId: string): Promise<ActivityRow> {
+  const taskDoneRow = (await queryOne<RowDataPacket & { cnt: number }>(
+    `SELECT COUNT(*) AS cnt FROM engagement_events
+     WHERE user_id = ? AND event = 'task_done'
+       AND occurred_at >= CURDATE() AND occurred_at < CURDATE() + INTERVAL 1 DAY`,
+    [userId]
+  )) as { cnt: number } | undefined;
+
+  const minutesRow = (await queryOne<RowDataPacket & { total_min: number | null }>(
+    `SELECT COALESCE(SUM(value), 0) AS total_min FROM engagement_events
+     WHERE user_id = ? AND event = 'session_end' AND value IS NOT NULL
+       AND occurred_at >= CURDATE() AND occurred_at < CURDATE() + INTERVAL 1 DAY`,
+    [userId]
+  )) as { total_min: number | null } | undefined;
+
+  const measRow = (await queryOne<RowDataPacket & { cnt: number }>(
+    `SELECT COUNT(*) AS cnt FROM skill_measurements
+     WHERE user_id = ?
+       AND measured_at >= CURDATE() AND measured_at < CURDATE() + INTERVAL 1 DAY`,
+    [userId]
+  )) as { cnt: number } | undefined;
+
+  return {
+    task_done_today: taskDoneRow?.cnt ?? 0,
+    minutes_today: minutesRow?.total_min ?? 0,
+    measurements_today: measRow?.cnt ?? 0,
+  };
+}
+
+/**
+ * Xác định HS cần hỗ trợ.
+ * Trả về 1 object chứa các flag + reason ngắn gọn để hiển thị.
+ */
+function classifyNeedsHelp(
+  engagement: { streak: number; lastActive: string | null; totalEvents: number; retryRate: number }
+): { needsHelp: boolean; reasons: string[] } {
+  const reasons: string[] = [];
+
+  // 1. Streak = 0 và từng có events trước đó (đã từng học nhưng bỏ)
+  if (engagement.totalEvents > 0 && engagement.streak === 0) {
+    reasons.push("Streak đứt");
+  }
+
+  // 2. Không active > 3 ngày
+  if (engagement.lastActive) {
+    const last = new Date(engagement.lastActive.replace(" ", "T") + "Z");
+    const daysAgo = Math.floor((Date.now() - last.getTime()) / (1000 * 60 * 60 * 24));
+    if (daysAgo > 3) {
+      reasons.push(`Không vào ${daysAgo} ngày`);
+    }
+  } else if (engagement.totalEvents === 0) {
+    reasons.push("Chưa từng học");
+  }
+
+  // 3. Retry rate cao = HS toàn sai (số task_done < số task_abandoned * 1.5)
+  if (engagement.retryRate > 0.6) {
+    reasons.push("Nhiều bài sai");
+  }
+
+  return { needsHelp: reasons.length > 0, reasons };
+}
+
+/**
+ * GET /api/dashboard/teacher
+ * Auto-resolve lớp đầu tiên của GV (admin → lớp bất kỳ). Trả cùng shape như /:classId.
+ */
+dashboardRouter.get("/teacher", async (req: Request, res: Response) => {
+  const teacher = await requireRole(req, res, ["teacher", "admin"]);
+  if (!teacher) return;
+
+  // Teacher: lớp đầu tiên của mình. Admin: lớp bất kỳ trong hệ thống.
+  const cls = teacher.role === "admin"
+    ? await queryOne<{ id: string }>(
+        `SELECT id FROM classes ORDER BY created_at ASC LIMIT 1`
+      )
+    : await queryOne<{ id: string }>(
+        `SELECT id FROM classes
+         WHERE teacher_id = ?
+         ORDER BY created_at ASC LIMIT 1`,
+        [teacher.id]
+      );
+  if (!cls) return res.status(404).json({ error: "Chưa có lớp nào." });
+
+  return handleTeacherClass(req, res, cls.id, teacher);
+});
+
 /**
  * GET /api/dashboard/teacher/:classId
  * Teacher: xem danh sách HS trong lớp + skills + recent activity
@@ -41,16 +140,33 @@ interface StudentRow extends RowDataPacket {
 dashboardRouter.get("/teacher/:classId", async (req: Request, res: Response) => {
   const teacher = await requireRole(req, res, ["teacher", "admin"]);
   if (!teacher) return;
+  return handleTeacherClass(req, res, req.params.classId, teacher);
+});
 
-  const { classId } = req.params;
-
+/**
+ * Shared handler cho cả /teacher và /teacher/:classId.
+ * - Verify ownership (admin pass)
+ * - Load class + students
+ * - Compute skills + engagement + today activity (parallel) cho mỗi HS
+ * - Triage "cần hỗ trợ"
+ * - Aggregate classStats
+ */
+async function handleTeacherClass(
+  req: Request,
+  res: Response,
+  classId: string,
+  teacher: AuthUser
+): Promise<void> {
   // Verify teacher owns this class (admin thì pass)
   if (teacher.role === "teacher") {
     const owns = await queryOne(
       "SELECT 1 FROM classes WHERE id = ? AND teacher_id = ?",
       [classId, teacher.id]
     );
-    if (!owns) return res.status(403).json({ error: "Bạn không dạy lớp này." });
+    if (!owns) {
+      res.status(403).json({ error: "Bạn không dạy lớp này." });
+      return;
+    }
   }
 
   // Class info
@@ -58,7 +174,10 @@ dashboardRouter.get("/teacher/:classId", async (req: Request, res: Response) => 
     "SELECT id, name, schedule, description FROM classes WHERE id = ?",
     [classId]
   );
-  if (!cls) return res.status(404).json({ error: "Lớp không tồn tại." });
+  if (!cls) {
+    res.status(404).json({ error: "Lớp không tồn tại." });
+    return;
+  }
 
   // Students in class
   const students = (await query<StudentRow[]>(
@@ -71,23 +190,97 @@ dashboardRouter.get("/teacher/:classId", async (req: Request, res: Response) => 
     [classId]
   )) as StudentRow[];
 
-  // For each student: compute current skills (parallel)
+  // For each student: compute current skills + engagement + today's activity (parallel)
   const studentsWithStats = await Promise.all(
     students.map(async (s) => {
-      const [skills, engagement] = await Promise.all([
+      const [skills, engagement, today] = await Promise.all([
         computeCurrentSkills(s.id),
         computeEngagement(s.id),
+        getTodayActivity(s.id),
       ]);
-      return { ...s, skills, engagement };
+      const help = classifyNeedsHelp(engagement);
+      return {
+        ...s,
+        skills,
+        engagement,
+        today,
+        needsHelp: help.needsHelp,
+        helpReasons: help.reasons,
+      };
     })
   );
+
+  // Class-level aggregates
+  const classStats = computeClassStats(studentsWithStats);
 
   res.json({
     class: cls,
     students: studentsWithStats,
     count: students.length,
+    classStats,
   });
-});
+}
+
+/**
+ * Tính aggregate stats cho toàn lớp — GV nhìn nhanh "lớp mình ổn không?"
+ */
+function computeClassStats(
+  students: Array<{
+    skills: Record<string, { attempts: number; [k: string]: any }>;
+    engagement: { streak: number; totalEvents: number; lastActive: string | null };
+    today: { task_done_today: number; minutes_today: number; measurements_today: number };
+    needsHelp: boolean;
+  }>
+) {
+  const total = students.length;
+  if (total === 0) {
+    return {
+      totalStudents: 0,
+      activeToday: 0,
+      needsHelpCount: 0,
+      avgSkills: { read: 0, write: 0, listen: 0, speak: 0, learn: 0 },
+      totalMeasurementsThisWeek: 0,
+      totalMinutesThisWeek: 0,
+    };
+  }
+
+  const activeToday = students.filter((s) => s.today.task_done_today > 0).length;
+  const needsHelpCount = students.filter((s) => s.needsHelp).length;
+
+  // Avg primary metric per skill
+  const skillIds = ["read", "write", "listen", "speak", "learn"] as const;
+  // Mỗi skill lấy metric "chính" (trùng với SKILL_META frontend)
+  const PRIMARY: Record<string, string> = {
+    read: "readComprehension",
+    write: "writeCoherence",
+    listen: "listenAccuracy",
+    speak: "speakPronunciation",
+    learn: "vocabRetention",
+  };
+  const avgSkills: Record<string, number> = {};
+  for (const sid of skillIds) {
+    const m = PRIMARY[sid];
+    const vals = students
+      .map((s) => Number(s.skills[sid]?.[m]) || 0)
+      .filter((v) => v > 0); // bỏ qua HS chưa có data
+    avgSkills[sid] = vals.length > 0 ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 0;
+  }
+
+  const totalMeasurementsThisWeek = students.reduce(
+    (sum, s) => sum + s.today.measurements_today,
+    0
+  );
+  const totalMinutesThisWeek = students.reduce((sum, s) => sum + s.today.minutes_today, 0);
+
+  return {
+    totalStudents: total,
+    activeToday,
+    needsHelpCount,
+    avgSkills,
+    totalMeasurementsThisWeek,
+    totalMinutesThisWeek,
+  };
+}
 
 interface ChildRow extends RowDataPacket {
   id: string;

@@ -37,6 +37,7 @@ import CoursesTab from "./components/CoursesTab";
 import AILabTab from "./components/AILabTab";
 import ProfileModal from "./components/ProfileModal";
 import LoginScreen from "./components/LoginScreen";
+import TeacherDashboard from "./components/TeacherDashboard";
 
 type Theme = "light" | "dark";
 
@@ -339,6 +340,9 @@ export default function App() {
     { id: "ailab", label: "Chat AI", icon: Bot, emoji: "💬" },
   ];
 
+  // Step 5: teacher/admin dùng TeacherDashboard thay vì 3-tab HS UI
+  const isTeacherLike = user.role === "teacher" || user.role === "admin";
+
   // ============================================================
   // RENDER GATES
   // ============================================================
@@ -463,52 +467,90 @@ export default function App() {
 
         {/* MAIN */}
         <main className="flex-grow w-full max-w-5xl mx-auto px-4 py-6 md:py-8 flex flex-col justify-start">
-          <AnimatePresence mode="wait">
-            {activeTab === "dashboard" && (
-              <motion.div
-                key="dashboard"
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -8 }}
-                transition={{ duration: 0.2 }}
-              >
-                <Dashboard profile={profile} setProfile={handleUpdateProfile} onNavigate={setActiveTab} onMeasured={refreshSkills} />
-              </motion.div>
-            )}
-            {activeTab === "courses" && (
-              <motion.div
-                key="courses"
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -8 }}
-                transition={{ duration: 0.2 }}
-              >
-                <CoursesTab onStartChat={() => setActiveTab("ailab")} onMeasured={refreshSkills} />
-              </motion.div>
-            )}
-            {activeTab === "ailab" && (
-              <motion.div
-                key="ailab"
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -8 }}
-                transition={{ duration: 0.2 }}
-              >
-                <AILabTab profile={profile} setProfile={handleUpdateProfile} onMeasured={refreshSkills} />
-              </motion.div>
-            )}
-          </AnimatePresence>
+          {isTeacherLike ? (
+            <TeacherDashboard />
+          ) : (
+            <AnimatePresence mode="wait">
+              {activeTab === "dashboard" && (
+                <motion.div
+                  key="dashboard"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  <Dashboard profile={profile} setProfile={handleUpdateProfile} onNavigate={setActiveTab} onMeasured={refreshSkills} />
+                </motion.div>
+              )}
+              {activeTab === "courses" && (
+                <motion.div
+                  key="courses"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  <CoursesTab onStartChat={() => setActiveTab("ailab")} onMeasured={refreshSkills} />
+                </motion.div>
+              )}
+              {activeTab === "ailab" && (
+                <motion.div
+                  key="ailab"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  <AILabTab profile={profile} setProfile={handleUpdateProfile} onMeasured={refreshSkills} />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          )}
         </main>
 
-        {/* MOBILE BOTTOM NAV */}
-        <nav
-          className="fixed bottom-0 inset-x-0 z-40 px-3 py-2.5 border-t backdrop-blur-lg md:hidden"
-          style={{
-            backgroundColor: "var(--bg-overlay)",
-            borderColor: "var(--border-soft)",
-          }}
-        >
-          <div className="w-full max-w-md mx-auto flex justify-around items-center">
+        {/* MOBILE BOTTOM NAV — chỉ HS mới có */}
+        {!isTeacherLike && (
+          <nav
+            className="fixed bottom-0 inset-x-0 z-40 px-3 py-2.5 border-t backdrop-blur-lg md:hidden"
+            style={{
+              backgroundColor: "var(--bg-overlay)",
+              borderColor: "var(--border-soft)",
+            }}
+          >
+            <div className="w-full max-w-md mx-auto flex justify-around items-center">
+              {navItems.map((item) => {
+                const isActive = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      sound.playClick();
+                      setActiveTab(item.id);
+                    }}
+                    className="flex flex-col items-center gap-0.5 px-4 py-1.5 rounded-2xl transition-all"
+                    style={{
+                      color: isActive ? "var(--primary)" : "var(--muted)",
+                      backgroundColor: isActive ? "var(--primary-soft)" : "transparent",
+                    }}
+                  >
+                    <span className="text-lg leading-none">{item.emoji}</span>
+                    <span className="text-[10px] font-bold">{item.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </nav>
+        )}
+
+        {/* DESKTOP FLOATING SIDE NAV — chỉ HS mới có */}
+        {!isTeacherLike && (
+          <div
+            className="hidden md:flex fixed left-5 top-1/2 -translate-y-1/2 flex-col gap-2 p-2 rounded-2xl border backdrop-blur-md z-40 shadow-lg"
+            style={{
+              backgroundColor: "var(--bg-overlay)",
+              borderColor: "var(--border)",
+            }}
+          >
             {navItems.map((item) => {
               const isActive = activeTab === item.id;
               return (
@@ -518,52 +560,22 @@ export default function App() {
                     sound.playClick();
                     setActiveTab(item.id);
                   }}
-                  className="flex flex-col items-center gap-0.5 px-4 py-1.5 rounded-2xl transition-all"
+                  className="p-3 rounded-xl transition-all flex flex-col items-center gap-0.5 min-w-[60px]"
                   style={{
-                    color: isActive ? "var(--primary)" : "var(--muted)",
                     backgroundColor: isActive ? "var(--primary-soft)" : "transparent",
+                    color: isActive ? "var(--primary)" : "var(--muted)",
                   }}
+                  title={item.label}
                 >
                   <span className="text-lg leading-none">{item.emoji}</span>
-                  <span className="text-[10px] font-bold">{item.label}</span>
+                  <span className="text-[9px] font-extrabold uppercase tracking-wide">
+                    {item.label}
+                  </span>
                 </button>
               );
             })}
           </div>
-        </nav>
-
-        {/* DESKTOP FLOATING SIDE NAV */}
-        <div
-          className="hidden md:flex fixed left-5 top-1/2 -translate-y-1/2 flex-col gap-2 p-2 rounded-2xl border backdrop-blur-md z-40 shadow-lg"
-          style={{
-            backgroundColor: "var(--bg-overlay)",
-            borderColor: "var(--border)",
-          }}
-        >
-          {navItems.map((item) => {
-            const isActive = activeTab === item.id;
-            return (
-              <button
-                key={item.id}
-                onClick={() => {
-                  sound.playClick();
-                  setActiveTab(item.id);
-                }}
-                className="p-3 rounded-xl transition-all flex flex-col items-center gap-0.5 min-w-[60px]"
-                style={{
-                  backgroundColor: isActive ? "var(--primary-soft)" : "transparent",
-                  color: isActive ? "var(--primary)" : "var(--muted)",
-                }}
-                title={item.label}
-              >
-                <span className="text-lg leading-none">{item.emoji}</span>
-                <span className="text-[9px] font-extrabold uppercase tracking-wide">
-                  {item.label}
-                </span>
-              </button>
-            );
-          })}
-        </div>
+        )}
 
         {/* PROFILE MODAL */}
         <AnimatePresence>

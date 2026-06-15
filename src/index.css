@@ -176,6 +176,13 @@ body {
 }
 .flicker { animation: flicker 1.4s ease-in-out infinite; }
 
+/* One-shot 360° spin for refresh button while loading */
+@keyframes spin-once {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.spin-once { animation: spin-once 0.8s linear infinite; }
+
 button, input, select, textarea {
   outline: none;
   -webkit-tap-highlight-color: transparent;

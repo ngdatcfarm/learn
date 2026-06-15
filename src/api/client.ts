@@ -203,10 +203,45 @@ export async function trackEvent(
 // Dashboard endpoints
 // ============================================================
 
-export interface ClassDashboard {
+export interface StudentWithStats {
+  id: string;
+  name: string;
+  username: string;
+  level: string | null;
+  cefr_level: string | null;
+  goal: string | null;
+  joined_at: string;
+  skills: SkillsResponse["skills"];
+  engagement: SkillsResponse["engagement"];
+  today: {
+    task_done_today: number;
+    minutes_today: number;
+    measurements_today: number;
+  };
+  needsHelp: boolean;
+  helpReasons: string[];
+}
+
+export interface ClassStats {
+  totalStudents: number;
+  activeToday: number;
+  needsHelpCount: number;
+  avgSkills: {
+    read: number;
+    write: number;
+    listen: number;
+    speak: number;
+    learn: number;
+  };
+  totalMeasurementsThisWeek: number;
+  totalMinutesThisWeek: number;
+}
+
+export interface TeacherDashboardResponse {
   class: { id: string; name: string; schedule: string | null; description: string | null };
-  students: Array<ApiUser & { skills: SkillsResponse["skills"]; engagement: SkillsResponse["engagement"] }>;
+  students: StudentWithStats[];
   count: number;
+  classStats: ClassStats;
 }
 
 export interface ParentDashboard {
@@ -214,10 +249,12 @@ export interface ParentDashboard {
   count: number;
 }
 
-export async function getTeacherDashboard(
-  classId: string
-): Promise<ClassDashboard> {
-  return request<ClassDashboard>("GET", `/api/dashboard/teacher/${classId}`);
+/**
+ * GET /api/dashboard/teacher — server auto-resolves lớp đầu tiên của GV (admin → lớp bất kỳ).
+ * Nếu muốn explicit classId (multi-class GV), dùng /api/dashboard/teacher/:classId sau.
+ */
+export async function getTeacherDashboard(): Promise<TeacherDashboardResponse> {
+  return request<TeacherDashboardResponse>("GET", "/api/dashboard/teacher");
 }
 
 export async function getParentDashboard(): Promise<ParentDashboard> {
