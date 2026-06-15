@@ -147,29 +147,39 @@ interface MeasurementRow extends RowDataPacket {
 }
 
 /**
- * AVG(value) của 1 skill trong 1 cửa sổ thời gian [startDaysAgo, endDaysAgo).
- *   - hôm nay:      startDaysAgo=0,  endDaysAgo=0  → CURDATE() đến CURDATE()+1
- *   - hôm qua:      startDaysAgo=1,  endDaysAgo=1
- *   - 7 ngày qua:   startDaysAgo=0,  endDaysAgo=7
- *   - 7 ngày trước: startDaysAgo=7,  endDaysAgo=14
+ * AVG(value) của 1 skill trong 1 cửa sổ thời gian định nghĩa sẵn.
+ * Dùng CURDATE() + INTERVAL n DAY trong MySQL → timezone-safe.
  *
- * Dùng DATE_SUB(CURDATE(), INTERVAL n DAY) để timezone-safe
- * (CURDATE() theo timezone của MySQL server).
+ * 4 cửa sổ:
+ *   - today:       [today 00:00,         tomorrow 00:00)        — hôm nay
+ *   - yesterday:   [yesterday 00:00,     today 00:00)           — hôm qua
+ *   - thisWeek:    [7 days ago 00:00,    today 00:00)           — 7 ngày gần nhất
+ *   - lastWeek:    [14 days ago 00:00,   7 days ago 00:00)      — 7 ngày trước đó
  */
+type Window = "today" | "yesterday" | "thisWeek" | "lastWeek";
+
 async function avgInWindow(
   userId: string,
   skill: string,
-  startDaysAgo: number,
-  endDaysAgo: number
+  window: Window
 ): Promise<number | null> {
+  const whereClause: Record<Window, string> = {
+    today:
+      "measured_at >= CURDATE() AND measured_at < CURDATE() + INTERVAL 1 DAY",
+    yesterday:
+      "measured_at >= CURDATE() - INTERVAL 1 DAY AND measured_at < CURDATE()",
+    thisWeek:
+      "measured_at >= CURDATE() - INTERVAL 7 DAY AND measured_at < CURDATE()",
+    lastWeek:
+      "measured_at >= CURDATE() - INTERVAL 14 DAY AND measured_at < CURDATE() - INTERVAL 7 DAY",
+  };
   const row = (await queryOne<RowDataPacket & { avg_value: number | null; cnt: number }>(
     `SELECT AVG(value) AS avg_value, COUNT(*) AS cnt
      FROM skill_measurements
      WHERE user_id = ?
        AND skill = ?
-       AND measured_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
-       AND measured_at <  DATE_SUB(CURDATE(), INTERVAL ? DAY)`,
-    [userId, skill, startDaysAgo, endDaysAgo]
+       AND ${whereClause[window]}`,
+    [userId, skill]
   )) as { avg_value: number | null; cnt: number } | undefined;
   if (!row || !row.cnt || row.avg_value == null) return null;
   return Math.round(row.avg_value * 100) / 100;
@@ -266,10 +276,10 @@ export async function computeCurrentSkills(
   await Promise.all(
     VALID_SKILLS.map(async (skill) => {
       const [today, yesterday, week, lastWeek] = await Promise.all([
-        avgInWindow(userId, skill, 0, 0),    // hôm nay (CURDATE → CURDATE+1)
-        avgInWindow(userId, skill, 1, 1),    // hôm qua
-        avgInWindow(userId, skill, 0, 7),    // 7 ngày gần nhất
-        avgInWindow(userId, skill, 7, 14),   // 7 ngày trước đó
+        avgInWindow(userId, skill, "today"),
+        avgInWindow(userId, skill, "yesterday"),
+        avgInWindow(userId, skill, "thisWeek"),
+        avgInWindow(userId, skill, "lastWeek"),
       ]);
       const s = out[skill];
       s.todayScore = today;
