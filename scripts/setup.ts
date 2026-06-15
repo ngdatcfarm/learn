@@ -274,10 +274,10 @@ async function verifySchema(): Promise<void> {
     "schema_migrations",
   ];
 
-  const rows = (await getPool().query(
+  const [rows] = (await getPool().query(
     "SELECT TABLE_NAME AS name FROM information_schema.tables WHERE table_schema = ? ORDER BY TABLE_NAME",
     [process.env.MYSQL_DATABASE]
-  )) as RowDataPacket[];
+  )) as [RowDataPacket[], any];
 
   const existing = new Set(rows.map((r) => r.name as string));
   const missing = expectedTables.filter((t) => !existing.has(t));

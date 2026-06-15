@@ -165,9 +165,9 @@ async function ensureMigrationsTable(): Promise<void> {
 }
 
 async function getAppliedVersions(): Promise<Set<number>> {
-  const rows = (await getPool().query(
+  const [rows] = (await getPool().query(
     "SELECT version FROM schema_migrations ORDER BY version"
-  )) as RowDataPacket[];
+  )) as [RowDataPacket[], any];
   return new Set(rows.map((r) => r.version as number));
 }
 
