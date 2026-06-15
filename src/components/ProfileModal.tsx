@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { motion } from "motion/react";
 import { UserSquare2, X, Check, Trash2, Sparkles } from "lucide-react";
-import { UserProfile } from "../types";
+import { UserProfile, DEFAULT_SKILLS, DEFAULT_ENGAGEMENT } from "../types";
 import sound from "../utils/sound";
 
 interface ProfileModalProps {
@@ -43,14 +43,23 @@ export default function ProfileModal({ profile, setProfile, onClose }: ProfileMo
         name: "Nguyên",
         avatar: "N",
         level: "Intermediate",
+        cefrLevel: "A2",
+        goal: "Tổng quát",
+        dailyGoalMinutes: 15,
         stars: 120,
-        streak: 5,
         isLoggedIn: true,
-        stats: {
-          wordsLearned: 14,
-          chatsCompleted: 2,
-          studyMinutes: 45,
-          dailyGoalProgress: 40,
+        skills: {
+          // Reset về 0 — HS mới hoàn toàn, chưa đo gì
+          read: { ...DEFAULT_SKILLS.read, attempts: 0, trend: "unknown" },
+          write: { ...DEFAULT_SKILLS.write, attempts: 0, trend: "unknown" },
+          listen: { ...DEFAULT_SKILLS.listen, attempts: 0, trend: "unknown" },
+          speak: { ...DEFAULT_SKILLS.speak, attempts: 0, trend: "unknown" },
+          learn: { ...DEFAULT_SKILLS.learn, attempts: 0, trend: "unknown" },
+        },
+        engagement: {
+          ...DEFAULT_ENGAGEMENT,
+          streak: 0,
+          lastActive: new Date().toISOString(),
         },
       });
       setTempName("Nguyên");

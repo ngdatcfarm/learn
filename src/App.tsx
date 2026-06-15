@@ -12,7 +12,7 @@ import {
   Moon,
   LayoutDashboard,
 } from "lucide-react";
-import { UserProfile } from "./types";
+import { UserProfile, DEFAULT_SKILLS, DEFAULT_ENGAGEMENT } from "./types";
 import sound from "./utils/sound";
 
 import Dashboard from "./components/Dashboard";
@@ -34,14 +34,25 @@ const DEFAULT_PROFILE: UserProfile = {
   name: "Nguyên",
   avatar: "N",
   level: "Intermediate",
+  cefrLevel: "A2",
+  goal: "Tổng quát",
+  dailyGoalMinutes: 15,
   stars: 120,
-  streak: 5,
   isLoggedIn: true,
-  stats: {
-    wordsLearned: 14,
-    chatsCompleted: 2,
-    studyMinutes: 45,
-    dailyGoalProgress: 40,
+  skills: {
+    read: { ...DEFAULT_SKILLS.read, readComprehension: 65, readVocabInContext: 50, readSpeed: 120, attempts: 4, trend: "improving" },
+    write: { ...DEFAULT_SKILLS.write, writeCoherence: 5, writeVocabRange: 0.4, writeGrammar: 8, attempts: 2, trend: "stable" },
+    listen: { ...DEFAULT_SKILLS.listen, listenAccuracy: 70, listenComprehension: 60, listenSpeedTolerance: 1.0, attempts: 3, trend: "improving" },
+    speak: { ...DEFAULT_SKILLS.speak, speakFluency: 80, speakPronunciation: 55, speakIntonation: 5, speakConfidence: 4, attempts: 2, trend: "stable" },
+    learn: { ...DEFAULT_SKILLS.learn, vocabKnown: 14, vocabRetention: 78, grammarMastery: 45, attempts: 5, trend: "improving" },
+  },
+  engagement: {
+    ...DEFAULT_ENGAGEMENT,
+    streak: 5,
+    avgSessionMinutes: 18,
+    retryRate: 0.4,
+    helpSeekingRate: 0.2,
+    lastActive: new Date().toISOString(),
   },
 };
 
@@ -56,7 +67,16 @@ export default function App() {
   useEffect(() => {
     try {
       const savedProfile = localStorage.getItem("apex_student_profile");
-      if (savedProfile) setProfile(JSON.parse(savedProfile));
+      if (savedProfile) {
+        const parsed = JSON.parse(savedProfile);
+        // Migration: nếu profile cũ chưa có `skills` (từ version stats cũ)
+        // → dùng DEFAULT_PROFILE để tránh crash
+        if (parsed && parsed.skills && parsed.engagement) {
+          setProfile(parsed);
+        } else {
+          console.warn("Profile cũ chưa tương thích Learner Model — dùng mặc định.");
+        }
+      }
 
       const savedSoundState = localStorage.getItem("apex_sound_enabled");
       if (savedSoundState !== null) {

@@ -81,10 +81,24 @@ export default function AILabTab({ profile, setProfile }: AILabTabProps) {
       setProfile({
         ...profile,
         stars: profile.stars + 10,
-        stats: {
-          ...profile.stats,
-          chatsCompleted: profile.stats.chatsCompleted + 1,
-          dailyGoalProgress: Math.min(100, profile.stats.dailyGoalProgress + 15),
+        skills: {
+          ...profile.skills,
+          // Mỗi lượt chat = 1 lần thực hành speak
+          speak: {
+            ...profile.skills.speak,
+            attempts: profile.skills.speak.attempts + 1,
+            lastMeasured: new Date().toISOString(),
+          },
+          // Chat cũng là cơ hội dùng từ vựng active
+          learn: {
+            ...profile.skills.learn,
+            vocabActiveUse: profile.skills.learn.vocabActiveUse + 1,
+            attempts: profile.skills.learn.attempts + 1,
+          },
+        },
+        engagement: {
+          ...profile.engagement,
+          lastActive: new Date().toISOString(),
         },
       });
     } catch (err: any) {

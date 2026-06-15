@@ -11,8 +11,11 @@ import {
   Check,
   Trophy,
   MessageCircleHeart,
+  TrendingUp,
+  Minus,
+  TrendingDown,
 } from "lucide-react";
-import { UserProfile, ReadingExercise } from "../types";
+import { UserProfile, ReadingExercise, SKILL_META, SkillId } from "../types";
 import { READING_EXERCISES } from "../data/coursesData";
 import sound from "../utils/sound";
 
@@ -44,10 +47,54 @@ export default function Dashboard({ profile, setProfile, onNavigate }: Dashboard
       setProfile({
         ...profile,
         stars: profile.stars + 15,
-        stats: {
-          ...profile.stats,
-          wordsLearned: profile.stats.wordsLearned + ex.vocabWords.length,
-          dailyGoalProgress: Math.min(100, profile.stats.dailyGoalProgress + 20),
+        skills: {
+          ...profile.skills,
+          // Đúng 1 câu đọc = cập nhật read metrics
+          read: {
+            ...profile.skills.read,
+            readComprehension: Math.min(
+              100,
+              profile.skills.read.attempts > 0
+                ? Math.round(
+                    (profile.skills.read.readComprehension * profile.skills.read.attempts + 100) /
+                      (profile.skills.read.attempts + 1)
+                  )
+                : 100
+            ),
+            readVocabInContext: Math.min(
+              100,
+              profile.skills.read.attempts > 0
+                ? Math.round(
+                    (profile.skills.read.readVocabInContext * profile.skills.read.attempts + 80) /
+                      (profile.skills.read.attempts + 1)
+                  )
+                : 80
+            ),
+            attempts: profile.skills.read.attempts + 1,
+            lastMeasured: new Date().toISOString(),
+            trend: "improving",
+          },
+          // Học vocab mới = cập nhật learn
+          learn: {
+            ...profile.skills.learn,
+            vocabKnown: profile.skills.learn.vocabKnown + ex.vocabWords.length,
+            vocabRetention: Math.min(
+              100,
+              profile.skills.learn.vocabRetention > 0
+                ? Math.round(
+                    (profile.skills.learn.vocabRetention * profile.skills.learn.attempts + 100) /
+                      (profile.skills.learn.attempts + 1)
+                  )
+                : 100
+            ),
+            attempts: profile.skills.learn.attempts + 1,
+            lastMeasured: new Date().toISOString(),
+            trend: "improving",
+          },
+        },
+        engagement: {
+          ...profile.engagement,
+          lastActive: new Date().toISOString(),
         },
       });
     } else {
@@ -62,6 +109,39 @@ export default function Dashboard({ profile, setProfile, onNavigate }: Dashboard
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Chào buổi sáng" : hour < 18 ? "Chào buổi chiều" : "Chào buổi tối";
   const greetingEmoji = hour < 12 ? "🌅" : hour < 18 ? "☀️" : "🌙";
+
+  // Tính daily progress từ engagement.avgSessionMinutes / dailyGoalMinutes
+  const dailyProgressPct = Math.min(
+    100,
+    Math.round((profile.engagement.avgSessionMinutes / profile.dailyGoalMinutes) * 100)
+  );
+
+  // Format giá trị primary metric cho mỗi skill (theo SKILL_META)
+  const formatSkillValue = (skill: SkillId, val: number): string => {
+    if (skill === "write") return val === 0 ? "—" : `${val}/10`;
+    if (skill === "speak") return val === 0 ? "—" : `${val} wpm`;
+    if (skill === "learn") return `${val} từ`;
+    return val === 0 ? "—" : `${val}%`;
+  };
+
+  // Tính % tiến bộ cho mỗi skill (so với mức "trưởng thành" định nghĩa tạm)
+  // Mục đích: hiển thị bar, không phải điểm tuyệt đối.
+  const skillProgressPct: Record<SkillId, number> = {
+    read: profile.skills.read.attempts === 0 ? 0 : profile.skills.read.readComprehension,
+    write: profile.skills.write.attempts === 0 ? 0 : profile.skills.write.writeCoherence * 10,
+    listen: profile.skills.listen.attempts === 0 ? 0 : profile.skills.listen.listenAccuracy,
+    speak: profile.skills.speak.attempts === 0 ? 0 : profile.skills.speak.speakPronunciation,
+    learn: profile.skills.learn.attempts === 0 ? 0 : profile.skills.learn.vocabRetention,
+  };
+
+  const skillOrder: SkillId[] = ["read", "write", "listen", "speak", "learn"];
+
+  const trendIcon = (trend: string) => {
+    if (trend === "improving") return <TrendingUp className="w-3 h-3" style={{ color: "var(--success)" }} />;
+    if (trend === "declining") return <TrendingDown className="w-3 h-3" style={{ color: "var(--danger)" }} />;
+    if (trend === "stable") return <Minus className="w-3 h-3" style={{ color: "var(--muted)" }} />;
+    return null;
+  };
 
   return (
     <div className="w-full max-w-5xl mx-auto space-y-6">
@@ -111,7 +191,7 @@ export default function Dashboard({ profile, setProfile, onNavigate }: Dashboard
               <div className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "var(--muted)" }}>
                 Streak
               </div>
-              <div className="text-sm font-extrabold">{profile.streak} ngày liên tiếp</div>
+              <div className="text-sm font-extrabold">{profile.engagement.streak} ngày liên tiếp</div>
             </div>
           </div>
           <div
@@ -155,7 +235,7 @@ export default function Dashboard({ profile, setProfile, onNavigate }: Dashboard
                   borderColor: "var(--primary)",
                 }}
               >
-                {profile.stats.dailyGoalProgress}% xong
+                {dailyProgressPct}% xong
               </span>
             </div>
 
@@ -166,40 +246,88 @@ export default function Dashboard({ profile, setProfile, onNavigate }: Dashboard
             >
               <motion.div
                 initial={{ width: 0 }}
-                animate={{ width: `${profile.stats.dailyGoalProgress}%` }}
+                animate={{ width: `${dailyProgressPct}%` }}
                 className="h-full rounded-full"
                 style={{ background: "linear-gradient(90deg, var(--primary), var(--accent))" }}
                 transition={{ duration: 0.8 }}
               />
             </div>
 
-            {/* Sub stats */}
-            <div className="grid grid-cols-3 gap-3 pt-2">
-              {[
-                { label: "Từ mới", value: profile.stats.wordsLearned, goal: 25, emoji: "📚" },
-                { label: "Lượt chat", value: profile.stats.chatsCompleted, goal: 2, emoji: "💬" },
-                { label: "Phút học", value: profile.stats.studyMinutes, goal: null, emoji: "⏱️" },
-              ].map((stat) => (
-                <div
-                  key={stat.label}
-                  className="p-3 rounded-2xl border"
-                  style={{ backgroundColor: "var(--bg-soft)", borderColor: "var(--border-soft)" }}
+            {/* 5 KỸ NĂNG — Learner Model */}
+            <div className="space-y-2.5 pt-2">
+              <div className="flex items-center justify-between">
+                <h4
+                  className="text-xs font-extrabold uppercase tracking-wider"
+                  style={{ color: "var(--muted-strong)" }}
                 >
-                  <span
-                    className="text-[10px] uppercase tracking-wider block font-bold"
-                    style={{ color: "var(--muted)" }}
-                  >
-                    {stat.emoji} {stat.label}
-                  </span>
-                  <span className="text-lg font-extrabold">
-                    {stat.value}
-                    {stat.goal !== null && (
-                      <span style={{ color: "var(--muted)" }}> / {stat.goal}</span>
-                    )}
-                    {stat.goal === null && <span style={{ color: "var(--muted)" }}>m</span>}
-                  </span>
-                </div>
-              ))}
+                  🧠 5 kỹ năng của mình
+                </h4>
+                <span
+                  className="text-[10px] font-bold"
+                  style={{ color: "var(--muted)" }}
+                  title="Cần ≥ 5 lần đo mới tin được"
+                >
+                  {Object.values(profile.skills).reduce((s, sk) => s + sk.attempts, 0)} lần đo
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-5 gap-2.5">
+                {skillOrder.map((sid) => {
+                  const meta = SKILL_META[sid];
+                  const sk = profile.skills[sid];
+                  const val = (sk as any)[meta.primaryMetric] as number;
+                  const pct = skillProgressPct[sid];
+                  const isNew = sk.attempts === 0;
+
+                  return (
+                    <div
+                      key={sid}
+                      className="p-3 rounded-2xl border space-y-1.5"
+                      style={{
+                        backgroundColor: "var(--bg-soft)",
+                        borderColor: isNew ? "var(--border-soft)" : meta.color,
+                      }}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-base leading-none">{meta.emoji}</span>
+                        {trendIcon(sk.trend)}
+                      </div>
+                      <div>
+                        <div
+                          className="text-[10px] font-extrabold uppercase tracking-wide"
+                          style={{ color: "var(--muted)" }}
+                        >
+                          {meta.label}
+                        </div>
+                        <div
+                          className="text-sm font-extrabold"
+                          style={{ color: isNew ? "var(--muted)" : meta.color }}
+                        >
+                          {formatSkillValue(sid, val)}
+                        </div>
+                      </div>
+                      <div
+                        className="w-full h-1 rounded-full overflow-hidden"
+                        style={{ backgroundColor: "var(--bg-elevated)" }}
+                      >
+                        <div
+                          className="h-full rounded-full transition-all"
+                          style={{
+                            width: `${pct}%`,
+                            backgroundColor: meta.color,
+                          }}
+                        />
+                      </div>
+                      <div
+                        className="text-[9px] font-bold"
+                        style={{ color: "var(--muted)" }}
+                      >
+                        {meta.primaryLabel} · {sk.attempts} lần
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
             {/* Reading scenarios */}
@@ -520,7 +648,7 @@ export default function Dashboard({ profile, setProfile, onNavigate }: Dashboard
 
             <div className="space-y-3.5 pt-2">
               {[
-                { id: "vocab", label: "Chat 30 lần với AI", current: profile.stats.chatsCompleted, total: 30, color: "var(--primary)" },
+                { id: "speak", label: "Luyện Nói 30 lượt", current: profile.skills.speak.attempts, total: 30, color: "var(--primary)" },
                 { id: "stars", label: "Đạt 300 ⭐", current: profile.stars, total: 300, color: "var(--accent)" },
                 { id: "reading", label: "Hoàn thành 3 bài đọc", current: 1, total: 3, color: "var(--secondary)" },
               ].map((c) => {

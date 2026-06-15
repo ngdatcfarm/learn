@@ -1,155 +1,114 @@
-import express from "express";
-import path from "path";
+/**
+ * server.ts — Express entry point
+ *
+ * Khởi động:
+ *   1. Verify DB đã sẵn sàng (nếu chưa → gợi ý chạy `npm run setup`)
+ *   2. Mount Vite dev middleware (dev) hoặc serve static (prod)
+ *   3. Mount API routes (auth, skills, engagement, dashboards)
+ *   4. Start listening
+ *
+ * Sau khi pull code mới lên server:
+ *   npm run setup    (idempotent, an toàn)
+ *   pm2 restart learn
+ */
+
+import express, { Request, Response, NextFunction } from "express";
+import path from "node:path";
+import fs from "node:fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import { getDb } from "./db/client";
+import { migrate } from "./db/migrate";
+import { authRouter } from "./server/auth";
+import { skillsRouter } from "./server/skills";
+import { engagementRouter } from "./server/engagement";
+import { dashboardRouter } from "./server/dashboard";
+import { questionBankRouter } from "./server/questionBank";
+import { aiRouter } from "./server/ai";
 
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = parseInt(process.env.PORT || "3000", 10);
 
-app.use(express.json());
+// ============================================================
+// DB initialization (chạy migrations nếu chưa)
+// ============================================================
+try {
+  const dbPath = path.join(process.cwd(), "data", "learn.db");
+  if (!fs.existsSync(dbPath)) {
+    console.warn("⚠️  Database chưa tồn tại. Chạy `npm run setup` trước khi start server.");
+  } else {
+    migrate();
+    getDb(); // mở connection
+    console.log("✓ Database connected");
+  }
+} catch (err) {
+  console.error("✗ Database init failed:", err);
+  process.exit(1);
+}
 
-// Initialize Gemini safely
+// ============================================================
+// Middleware
+// ============================================================
+app.use(express.json({ limit: "1mb" }));
+
+// Request logging (dev only)
+if (process.env.NODE_ENV !== "production") {
+  app.use((req, _res, next) => {
+    if (req.path.startsWith("/api/")) {
+      console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
+    }
+    next();
+  });
+}
+
+// ============================================================
+// Gemini AI (cho /api/tutor/* endpoints)
+// ============================================================
 let ai: GoogleGenAI | null = null;
 try {
   if (process.env.GEMINI_API_KEY) {
-    ai = new GoogleGenAI({
-      apiKey: process.env.GEMINI_API_KEY,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        }
-      }
-    });
-    console.log("Gemini API initialized successfully on server-side.");
+    ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    console.log("✓ Gemini API initialized");
   } else {
-    console.warn("GEMINI_API_KEY is not defined. AI Chat functions will run in backup offline-assistance mode.");
+    console.warn("⚠  GEMINI_API_KEY not set — AI endpoints chạy chế độ offline fallback");
   }
 } catch (err) {
-  console.error("Failed to initialize GoogleGenAI client:", err);
+  console.error("Failed to init Gemini:", err);
 }
 
-// 1. Live Chat API Proxy
-app.post("/api/tutor/chat", async (req, res) => {
-  try {
-    const { messages, userProfile } = req.body;
-    
-    if (!messages || !Array.isArray(messages)) {
-      return res.status(400).json({ error: "Tham số 'messages' không hợp lệ." });
-    }
-
-    const sysInstruction = `You are Apex AI Tutor, an advanced, highly engaging, and modern English conversation partner designed for Vietnamese high schoolers aged 14-18 (Level: ${userProfile?.level || "Intermediate"}).
-Rules to follow:
-1. Conduct the discussion naturally in English about standard high schooler topics: study habits, technology, university majors, side projects, sports, music, and software development.
-2. Maintain an encouraging, intellectual, and professional tone (comparable to ChatGPT/Notion AI). Avoid childish expressions or characters.
-3. Keep answers concise—usually 2 to 3 sentences—to mimic a real chat room experience.
-4. Keep the conversation flowing by periodically asking back a relevant, thought-provoking question.
-5. Do not output Vietnamese translation unless explicitly asked, but use clear, structured English that fits their selected proficiency level (${userProfile?.level || "Intermediate"}).`;
-
-    // Map message list to model format
-    // Since GoogleGenAI expects clean format, let's assemble contents.
-    // The messages array will contain { role: 'user' | 'assistant', content: string }
-    // We should convert 'assistant' role to 'model' for Gemini SDK contents.
-    const contents = messages.map(msg => ({
-      role: msg.role === "assistant" ? "model" : "user",
-      parts: [{ text: msg.content }]
-    }));
-
-    if (!ai) {
-      // Graceful offline fallback
-      const lastMsg = messages[messages.length - 1]?.content || "";
-      const backupReplies = [
-        `That's highly engaging! As your offline AI mentor, let me suggest focusing on active recall for terms like "${lastMsg.substring(0, 10)}". (Setup your GEMINI_API_KEY for real live interactive chat!)`,
-        `Fascinating point about that! In academic English, we'd structure this using sub-clauses. Let's practice drafting an argumentative paragraph!`,
-        `That makes complete sense. If you are preparing for exams, try to incorporate more academic vocabularies. Shall we try?`,
-        `Excellent response! Keep pushing your limits. Tell me more about what you intend to accomplish next.`
-      ];
-      const selected = backupReplies[Math.floor(Math.random() * backupReplies.length)];
-      return res.json({ text: selected });
-    }
-
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: contents,
-      config: {
-        systemInstruction: sysInstruction,
-        temperature: 0.7,
-      }
-    });
-
-    res.json({ text: response.text });
-  } catch (error: any) {
-    console.error("Error during server-side Gemini Chat generate:", error);
-    res.status(500).json({ error: error.message || "Đã xảy ra lỗi khi trao đổi với AI Tutor." });
-  }
+// ============================================================
+// API Routes
+// ============================================================
+app.get("/api/health", (_req, res) => {
+  res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-// 2. Action Helper API (Sửa lỗi, Gợi ý trả lời, Dịch nghĩa)
-app.post("/api/tutor/analyze", async (req, res) => {
-  try {
-    const { action, text, contextMessage } = req.body;
-    if (!action || !text) {
-      return res.status(400).json({ error: "Thiếu thông tin phân tích cần thiết." });
-    }
+app.use("/api/auth", authRouter);
+app.use("/api/skills", skillsRouter);
+app.use("/api/engagement", engagementRouter);
+app.use("/api/dashboard", dashboardRouter);
+app.use("/api/question-bank", questionBankRouter);
+app.use("/api/tutor", aiRouter(ai));
 
-    if (!ai) {
-      // Standard offline static explanations
-      if (action === "fix") {
-        return res.json({
-          analysis: `✨ **Offline analysis**: Your sentence looks structurally solid. \n\n*Configure the **GEMINI_API_KEY** in Secrets to receive real-time granular spelling & style corrections from ChatGPT-style LLM!*`
-        });
-      } else if (action === "suggest") {
-        return res.json({
-          analysis: `💡 **Kiến nghị 3 cách phản hồi tối ưu (Offline):**\n\n1. *"I understand your perspective, let's explore more structural evidence..."*\n2. *"That sounds like a fascinating pursuit. What inspired this?"*\n3. *"From my point of view, advanced technical projects play a major role in..."*`
-        });
-      } else {
-        return res.json({
-          analysis: `🇻🇳 **Bản dịch Offline tương đối**: \n\n"${text}" \n\n*(Setup một API Key thực tế để dịch chuyên khoa và thành ngữ văn học!)*`
-        });
-      }
-    }
-
-    let sysInstruction = "";
-    let prompt = "";
-
-    if (action === "fix") {
-      sysInstruction = "You are a professional ESL teacher and style editor for high schoolers (14-18) preparing for college standard English.";
-      prompt = `Review the following English sentence: "${text}".
-Provide a concise, aesthetic critique using Markdown highlighting:
-1. **Grammar & Spelling check**: Did they make any mistakes? If so, point them out.
-2. **Standard correction**: Give a natural, highly polished way to write it.
-3. **Advanced alternative**: Provide a premium alternative using stronger vocabulary suitable for 14-18 year olds (IELTS style level 6.0-7.5).
-Keep your formatting extremely clean and short using bullet points.`;
-    } else if (action === "suggest") {
-      sysInstruction = "You are an English conversation instigator for teenagers preparing for Standardised tests.";
-      prompt = `For this tutor comment: "${text}", suggest 3 clean, highly natural, mature ways the student can respond in English. Each option should represent a different style (e.g., Option 1: Academically analytical, Option 2: Personal & detailed, Option 3: Curious/questioning).
-Present only the 3 options with a 1-line English explanation for each. Keep it incredibly practical and clean!`;
-    } else if (action === "translate") {
-      sysInstruction = "You are a highly efficient bilingual translator translating educational English text into beautiful, natural Vietnamese.";
-      prompt = `Translate this text precisely into natural, non-robotic modern Vietnamese: "${text}". Keep it clean and polite, fitting high school standard learners. Only output the direct translation, nothing else.`;
-    } else {
-      return res.status(400).json({ error: "Hành động phân tích không được hỗ trợ." });
-    }
-
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: prompt,
-      config: {
-        systemInstruction: sysInstruction,
-        temperature: 0.3,
-      }
-    });
-
-    res.json({ analysis: response.text });
-  } catch (error: any) {
-    console.error("Error during server-side Gemini Analyze:", error);
-    res.status(500).json({ error: error.message || "Đã xảy ra lỗi khi phân tích bằng AI." });
-  }
+// 404 cho API
+app.use("/api/*", (_req, res) => {
+  res.status(404).json({ error: "API endpoint không tồn tại." });
 });
 
-// 3. Integration with Vite (with safe production handler)
+// Error handler
+app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+  console.error("Server error:", err);
+  res.status(err.statusCode || 500).json({
+    error: err.message || "Internal server error",
+  });
+});
+
+// ============================================================
+// Vite (dev) hoặc static (prod)
+// ============================================================
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -157,18 +116,23 @@ async function startServer() {
       appType: "spa",
     });
     app.use(vite.middlewares);
-    console.log("Mounted Vite development middleware.");
+    console.log("✓ Vite dev middleware mounted");
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    const distPath = path.join(process.cwd(), "dist");
+    if (!fs.existsSync(distPath)) {
+      console.error("✗ dist/ chưa có. Chạy `npm run build` trước.");
+      process.exit(1);
+    }
     app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+    app.get("*", (_req, res) => {
+      res.sendFile(path.join(distPath, "index.html"));
     });
-    console.log("Serving static production files from /dist.");
+    console.log("✓ Serving static dist/");
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Express server started on http://0.0.0.0:${PORT}`);
+    console.log(`\n🚀 Server running on http://0.0.0.0:${PORT}`);
+    console.log(`   Health: http://localhost:${PORT}/api/health\n`);
   });
 }
 
