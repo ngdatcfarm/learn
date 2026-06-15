@@ -14,6 +14,7 @@
  */
 
 import express, { Request, Response, NextFunction } from "express";
+import "express-async-errors"; // MUST be imported AFTER express, BEFORE any routers — patches Express 4 to catch async errors
 import path from "node:path";
 import fs from "node:fs";
 import { createServer as createViteServer } from "vite";

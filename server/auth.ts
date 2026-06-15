@@ -48,12 +48,18 @@ function verifyPassword(password: string, salt: string, expectedHash: string): b
 
 async function issueToken(userId: string): Promise<{ token: string; expiresAt: string }> {
   const token = crypto.randomBytes(32).toString("hex");
-  const expiresAt = new Date(Date.now() + TOKEN_TTL_MS).toISOString();
+  const expiresAtDate = new Date(Date.now() + TOKEN_TTL_MS);
+  const expiresAtIso = expiresAtDate.toISOString();
+  // MySQL DATETIME expects "YYYY-MM-DD HH:MM:SS" (no T, no Z, no milliseconds)
+  const expiresAtMysql = expiresAtDate
+    .toISOString()
+    .slice(0, 19)
+    .replace("T", " ");
   await query<ResultSetHeader>(
     "INSERT INTO auth_sessions (token, user_id, expires_at) VALUES (?, ?, ?)",
-    [token, userId, expiresAt]
+    [token, userId, expiresAtMysql]
   );
-  return { token, expiresAt };
+  return { token, expiresAt: expiresAtIso };
 }
 
 export const authRouter = Router();
