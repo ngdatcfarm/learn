@@ -1,8 +1,6 @@
 import { useState, useEffect, createContext, useContext } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
-  Flame,
-  Sparkles,
   Bot,
   Layers,
   Volume2,
@@ -11,14 +9,33 @@ import {
   Sun,
   Moon,
   LayoutDashboard,
+  LogOut,
 } from "lucide-react";
-import { UserProfile, DEFAULT_SKILLS, DEFAULT_ENGAGEMENT } from "./types";
+import {
+  UserProfile,
+  DEFAULT_SKILLS,
+  DEFAULT_ENGAGEMENT,
+  LearnerSkills,
+  EngagementMetrics,
+  SkillId,
+} from "./types";
 import sound from "./utils/sound";
+import {
+  ApiUser,
+  getToken,
+  clearAuth,
+  getMe,
+  getMySkills,
+  logout as apiLogout,
+  SkillsResponse,
+  SkillState,
+} from "./api/client";
 
 import Dashboard from "./components/Dashboard";
 import CoursesTab from "./components/CoursesTab";
 import AILabTab from "./components/AILabTab";
 import ProfileModal from "./components/ProfileModal";
+import LoginScreen from "./components/LoginScreen";
 
 type Theme = "light" | "dark";
 
@@ -30,54 +47,130 @@ interface ThemeCtx {
 const ThemeContext = createContext<ThemeCtx>({ theme: "dark", toggleTheme: () => {} });
 export const useTheme = () => useContext(ThemeContext);
 
-const DEFAULT_PROFILE: UserProfile = {
-  name: "Nguyên",
-  avatar: "N",
-  level: "Intermediate",
-  cefrLevel: "A2",
-  goal: "Tổng quát",
-  dailyGoalMinutes: 15,
-  stars: 120,
-  isLoggedIn: true,
-  skills: {
-    read: { ...DEFAULT_SKILLS.read, readComprehension: 65, readVocabInContext: 50, readSpeed: 120, attempts: 4, trend: "improving" },
-    write: { ...DEFAULT_SKILLS.write, writeCoherence: 5, writeVocabRange: 0.4, writeGrammar: 8, attempts: 2, trend: "stable" },
-    listen: { ...DEFAULT_SKILLS.listen, listenAccuracy: 70, listenComprehension: 60, listenSpeedTolerance: 1.0, attempts: 3, trend: "improving" },
-    speak: { ...DEFAULT_SKILLS.speak, speakFluency: 80, speakPronunciation: 55, speakIntonation: 5, speakConfidence: 4, attempts: 2, trend: "stable" },
-    learn: { ...DEFAULT_SKILLS.learn, vocabKnown: 14, vocabRetention: 78, grammarMastery: 45, attempts: 5, trend: "improving" },
-  },
-  engagement: {
-    ...DEFAULT_ENGAGEMENT,
-    streak: 5,
-    avgSessionMinutes: 18,
-    retryRate: 0.4,
-    helpSeekingRate: 0.2,
-    lastActive: new Date().toISOString(),
-  },
-};
+// ============================================================
+// Mappers: API shape → UI shape
+// ============================================================
+
+function mapSkillState(skillId: SkillId, s: SkillState | undefined): any {
+  // Bắt đầu từ DEFAULT_SKILLS của skill đó (đảm bảo đủ fields + đúng type)
+  const base: any = { ...(DEFAULT_SKILLS as any)[skillId] };
+  if (!s) return base;
+  // Merge các field numeric từ server vào
+  for (const [k, v] of Object.entries(s)) {
+    if (k === "trend") {
+      base.trend = v;
+    } else if (k === "lastMeasured") {
+      base.lastMeasured = (v as string) || undefined;
+    } else if (k === "attempts") {
+      base.attempts = typeof v === "number" ? v : 0;
+    } else {
+      // metric khác (readSpeed, writeGrammar, …) — chỉ nhận number
+      if (typeof v === "number") base[k] = v;
+    }
+  }
+  return base;
+}
+
+function mapSkillsResponse(res: SkillsResponse): { skills: LearnerSkills; engagement: EngagementMetrics } {
+  const skills: LearnerSkills = {
+    read: mapSkillState("read", res.skills?.read) as LearnerSkills["read"],
+    write: mapSkillState("write", res.skills?.write) as LearnerSkills["write"],
+    listen: mapSkillState("listen", res.skills?.listen) as LearnerSkills["listen"],
+    speak: mapSkillState("speak", res.skills?.speak) as LearnerSkills["speak"],
+    learn: mapSkillState("learn", res.skills?.learn) as LearnerSkills["learn"],
+  };
+  const e = res.engagement || ({} as SkillsResponse["engagement"]);
+  const engagement: EngagementMetrics = {
+    streak: e.streak ?? 0,
+    avgSessionMinutes: e.avgSessionMinutes ?? 0,
+    retryRate: e.retryRate ?? 0,
+    helpSeekingRate: e.helpSeekingRate ?? 0,
+    dropoutPerTask: e.dropoutPerTask ?? 0,
+    lastActive: e.lastActive || undefined,
+  };
+  return { skills, engagement };
+}
+
+function buildProfileFromUser(user: ApiUser, skills: LearnerSkills, engagement: EngagementMetrics): UserProfile {
+  const level = (user.level as UserProfile["level"]) || "Beginner";
+  const dailyGoal = ([5, 15, 30] as const).includes(user.dailyGoalMinutes as 5 | 15 | 30)
+    ? (user.dailyGoalMinutes as 5 | 15 | 30)
+    : 15;
+  return {
+    name: user.name,
+    avatar: (user.name || user.username || "?").charAt(0).toUpperCase(),
+    level,
+    cefrLevel: user.cefrLevel as UserProfile["cefrLevel"],
+    goal: user.goal as UserProfile["goal"],
+    dailyGoalMinutes: dailyGoal,
+    stars: 0,
+    isLoggedIn: true,
+    skills,
+    engagement,
+  };
+}
 
 export default function App() {
-  const [profile, setProfile] = useState<UserProfile>(DEFAULT_PROFILE);
+  const [user, setUser] = useState<ApiUser | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<"dashboard" | "courses" | "ailab">("dashboard");
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [theme, setTheme] = useState<Theme>("dark");
 
-  // Load persisted state on mount
+  // ============================================================
+  // Auth bootstrap: check localStorage token → verify → load skills
+  // ============================================================
+  useEffect(() => {
+    let cancelled = false;
+
+    const bootstrap = async () => {
+      const token = getToken();
+      if (!token) {
+        setAuthLoading(false);
+        return;
+      }
+      try {
+        const me = await getMe();
+        let skills: LearnerSkills = { ...DEFAULT_SKILLS };
+        let engagement: EngagementMetrics = { ...DEFAULT_ENGAGEMENT };
+        try {
+          const res = await getMySkills();
+          const mapped = mapSkillsResponse(res);
+          skills = mapped.skills;
+          engagement = mapped.engagement;
+        } catch (e) {
+          // skills endpoint fail → vẫn cho vào app với default
+          console.warn("Không load được skills — dùng default:", e);
+        }
+        if (cancelled) return;
+        setUser(me);
+        setProfile(buildProfileFromUser(me, skills, engagement));
+      } catch (e) {
+        // Token hết hạn / invalid → clear và về login
+        console.warn("Auth verify failed:", e);
+        clearAuth();
+        if (!cancelled) {
+          setUser(null);
+          setProfile(null);
+        }
+      } finally {
+        if (!cancelled) setAuthLoading(false);
+      }
+    };
+
+    bootstrap();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // ============================================================
+  // Local UI state (sound/theme) — load once
+  // ============================================================
   useEffect(() => {
     try {
-      const savedProfile = localStorage.getItem("apex_student_profile");
-      if (savedProfile) {
-        const parsed = JSON.parse(savedProfile);
-        // Migration: nếu profile cũ chưa có `skills` (từ version stats cũ)
-        // → dùng DEFAULT_PROFILE để tránh crash
-        if (parsed && parsed.skills && parsed.engagement) {
-          setProfile(parsed);
-        } else {
-          console.warn("Profile cũ chưa tương thích Learner Model — dùng mặc định.");
-        }
-      }
-
       const savedSoundState = localStorage.getItem("apex_sound_enabled");
       if (savedSoundState !== null) {
         const enabled = savedSoundState === "true";
@@ -93,17 +186,38 @@ export default function App() {
         document.documentElement.setAttribute("data-theme", "dark");
       }
     } catch (e) {
-      console.error("Failed to load saved state:", e);
+      console.error("Failed to load UI state:", e);
     }
   }, []);
 
+  const handleLoginSuccess = (u: ApiUser) => {
+    setUser(u);
+    // Lúc này chưa load skills → dùng default trước, fetch song song
+    setProfile(
+      buildProfileFromUser(u, { ...DEFAULT_SKILLS }, { ...DEFAULT_ENGAGEMENT })
+    );
+    setAuthLoading(false);
+    // Fetch skills rồi merge vào
+    getMySkills()
+      .then((res) => {
+        const mapped = mapSkillsResponse(res);
+        setProfile((prev) =>
+          prev ? { ...prev, skills: mapped.skills, engagement: mapped.engagement } : prev
+        );
+      })
+      .catch((e) => console.warn("Load skills after login failed:", e));
+  };
+
+  const handleLogout = async () => {
+    sound.playClick();
+    await apiLogout();
+    setUser(null);
+    setProfile(null);
+    setIsProfileOpen(false);
+  };
+
   const handleUpdateProfile = (newProfile: UserProfile) => {
     setProfile(newProfile);
-    try {
-      localStorage.setItem("apex_student_profile", JSON.stringify(newProfile));
-    } catch (e) {
-      console.error("Failed to save profile:", e);
-    }
   };
 
   const handleToggleSound = () => {
@@ -136,6 +250,42 @@ export default function App() {
     { id: "ailab", label: "Chat AI", icon: Bot, emoji: "💬" },
   ];
 
+  // ============================================================
+  // RENDER GATES
+  // ============================================================
+
+  // 1. Đang verify auth → spinner
+  if (authLoading) {
+    return (
+      <div
+        className="min-h-screen flex items-center justify-center antialiased"
+        style={{ backgroundColor: "var(--bg)", color: "var(--foreground)" }}
+      >
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="flex flex-col items-center gap-3"
+        >
+          <div className="floaty w-16 h-16 rounded-3xl bg-gradient-to-br from-sky-400 to-violet-500 flex items-center justify-center shadow-md">
+            <span className="text-3xl">🦉</span>
+          </div>
+          <div
+            className="text-sm font-bold"
+            style={{ color: "var(--muted)" }}
+          >
+            Đang tải...
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
+
+  // 2. Chưa đăng nhập → LoginScreen
+  if (!user || !profile) {
+    return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
+  }
+
+  // 3. Đã đăng nhập → app chính
   return (
     <ThemeContext.Provider value={{ theme, toggleTheme: handleToggleTheme }}>
       <div
@@ -271,7 +421,6 @@ export default function App() {
         >
           <div className="w-full max-w-md mx-auto flex justify-around items-center">
             {navItems.map((item) => {
-              const Icon = item.icon;
               const isActive = activeTab === item.id;
               return (
                 <button
@@ -303,7 +452,6 @@ export default function App() {
           }}
         >
           {navItems.map((item) => {
-            const Icon = item.icon;
             const isActive = activeTab === item.id;
             return (
               <button
@@ -333,8 +481,9 @@ export default function App() {
           {isProfileOpen && (
             <ProfileModal
               profile={profile}
-              setProfile={handleUpdateProfile}
               onClose={() => setIsProfileOpen(false)}
+              onLogout={handleLogout}
+              user={user}
             />
           )}
         </AnimatePresence>
