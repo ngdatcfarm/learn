@@ -26,6 +26,13 @@ export interface SkillState {
   lastMeasured: string | null;
   trend: "improving" | "stable" | "declining" | "unknown";
   [metric: string]: number | string | null;
+  // Step 2: time-window comparisons
+  todayScore: number | null;
+  yesterdayScore: number | null;
+  todayDelta: number | null;
+  weekScore: number | null;
+  lastWeekScore: number | null;
+  weekDelta: number | null;
 }
 
 export interface SkillsResponse {

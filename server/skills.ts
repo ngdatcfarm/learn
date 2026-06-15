@@ -129,12 +129,65 @@ interface SkillState {
   lastMeasured: string | null;
   trend: "improving" | "stable" | "declining" | "unknown";
   [metric: string]: number | string | null;
+  // Step 2: time-window comparisons (so với chính mình)
+  // todayScore = AVG(value) của các measurements hôm nay
+  // todayDelta = % thay đổi so với hôm qua (null nếu chưa có data hôm qua)
+  todayScore: number | null;
+  yesterdayScore: number | null;
+  todayDelta: number | null;
+  weekScore: number | null;
+  lastWeekScore: number | null;
+  weekDelta: number | null;
 }
 
 interface MeasurementRow extends RowDataPacket {
   metric: string;
   value: number;
   measured_at: string;
+}
+
+/**
+ * AVG(value) của 1 skill trong 1 cửa sổ thời gian [startDaysAgo, endDaysAgo).
+ *   - hôm nay:      startDaysAgo=0,  endDaysAgo=0  → CURDATE() đến CURDATE()+1
+ *   - hôm qua:      startDaysAgo=1,  endDaysAgo=1
+ *   - 7 ngày qua:   startDaysAgo=0,  endDaysAgo=7
+ *   - 7 ngày trước: startDaysAgo=7,  endDaysAgo=14
+ *
+ * Dùng DATE_SUB(CURDATE(), INTERVAL n DAY) để timezone-safe
+ * (CURDATE() theo timezone của MySQL server).
+ */
+async function avgInWindow(
+  userId: string,
+  skill: string,
+  startDaysAgo: number,
+  endDaysAgo: number
+): Promise<number | null> {
+  const row = (await queryOne<RowDataPacket & { avg_value: number | null; cnt: number }>(
+    `SELECT AVG(value) AS avg_value, COUNT(*) AS cnt
+     FROM skill_measurements
+     WHERE user_id = ?
+       AND skill = ?
+       AND measured_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+       AND measured_at <  DATE_SUB(CURDATE(), INTERVAL ? DAY)`,
+    [userId, skill, startDaysAgo, endDaysAgo]
+  )) as { avg_value: number | null; cnt: number } | undefined;
+  if (!row || !row.cnt || row.avg_value == null) return null;
+  return Math.round(row.avg_value * 100) / 100;
+}
+
+/**
+ * Tính % delta giữa 2 giá trị.
+ *   - a hoặc b = null  → null (chưa đủ dữ liệu)
+ *   - a = 0 và b > 0   → -100 (giảm hoàn toàn)
+ *   - a > 0 và b = 0   → 100  (tăng từ 0, không chia được)
+ *   - b = 0 và a = 0   → 0
+ *   - normal           → ((a - b) / |b|) * 100
+ */
+function pctDelta(a: number | null, b: number | null): number | null {
+  if (a == null || b == null) return null;
+  if (a === 0 && b === 0) return 0;
+  if (b === 0) return 100; // tăng từ 0
+  return Math.round(((a - b) / Math.abs(b)) * 1000) / 10; // 1 chữ số thập phân
 }
 
 export async function computeCurrentSkills(
@@ -148,6 +201,12 @@ export async function computeCurrentSkills(
       attempts: 0,
       lastMeasured: null,
       trend: "unknown",
+      todayScore: null,
+      yesterdayScore: null,
+      todayDelta: null,
+      weekScore: null,
+      lastWeekScore: null,
+      weekDelta: null,
     };
     for (const m of metrics) state[m] = 0;
 
@@ -202,6 +261,25 @@ export async function computeCurrentSkills(
 
     out[skill] = state;
   }
+
+  // Time-window comparisons (song song cho 5 skills)
+  await Promise.all(
+    VALID_SKILLS.map(async (skill) => {
+      const [today, yesterday, week, lastWeek] = await Promise.all([
+        avgInWindow(userId, skill, 0, 0),    // hôm nay (CURDATE → CURDATE+1)
+        avgInWindow(userId, skill, 1, 1),    // hôm qua
+        avgInWindow(userId, skill, 0, 7),    // 7 ngày gần nhất
+        avgInWindow(userId, skill, 7, 14),   // 7 ngày trước đó
+      ]);
+      const s = out[skill];
+      s.todayScore = today;
+      s.yesterdayScore = yesterday;
+      s.todayDelta = pctDelta(today, yesterday);
+      s.weekScore = week;
+      s.lastWeekScore = lastWeek;
+      s.weekDelta = pctDelta(week, lastWeek);
+    })
+  );
 
   return out;
 }

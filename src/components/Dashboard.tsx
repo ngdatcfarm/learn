@@ -246,6 +246,27 @@ export default function Dashboard({ profile, setProfile, onNavigate, onMeasured 
                   const val = (sk as any)[meta.primaryMetric] as number;
                   const pct = skillProgressPct[sid];
                   const isNew = sk.attempts === 0;
+                  // Delta vs hôm qua
+                  const d = (sk as any).todayDelta as number | null;
+                  const deltaArrow = d == null ? "—" : d > 0 ? "↑" : d < 0 ? "↓" : "→";
+                  const deltaColor =
+                    d == null
+                      ? "var(--muted)"
+                      : d > 0
+                      ? "var(--success)"
+                      : d < 0
+                      ? "var(--danger)"
+                      : "var(--muted)";
+                  const deltaText =
+                    d == null
+                      ? "Chưa có hôm qua"
+                      : `${deltaArrow}${Math.abs(d)}% vs hôm qua`;
+                  // Delta vs tuần trước (tooltip)
+                  const w = (sk as any).weekDelta as number | null;
+                  const weekText =
+                    w == null
+                      ? ""
+                      : `${w > 0 ? "↑" : w < 0 ? "↓" : "→"}${Math.abs(w)}% vs tuần trước`;
 
                   return (
                     <div
@@ -292,6 +313,16 @@ export default function Dashboard({ profile, setProfile, onNavigate, onMeasured 
                       >
                         {meta.primaryLabel} · {sk.attempts} lần
                       </div>
+                      {/* Step 2: so sánh với chính mình */}
+                      {!isNew && (
+                        <div
+                          className="text-[9px] font-extrabold flex items-center gap-1"
+                          style={{ color: deltaColor }}
+                          title={weekText ? `Tuần: ${weekText}` : undefined}
+                        >
+                          <span>{deltaText}</span>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
