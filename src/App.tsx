@@ -39,6 +39,7 @@ import ProfileModal from "./components/ProfileModal";
 import LoginScreen from "./components/LoginScreen";
 import TeacherDashboard from "./components/TeacherDashboard";
 import AdminDashboard from "./components/AdminDashboard";
+import ParentDashboard from "./components/ParentDashboard";
 
 type Theme = "light" | "dark";
 
@@ -376,11 +377,14 @@ export default function App() {
     return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
   }
 
-  // Step 5: teacher dùng TeacherDashboard; Step 6: admin dùng AdminDashboard riêng
+  // Step 5: teacher dùng TeacherDashboard; Step 6: admin dùng AdminDashboard riêng;
+  // Step 4: parent dùng ParentDashboard.
+  // `isStaff` = admin + teacher + parent — đều skip 3-tab nav (HS UI).
   // (Sau gate ở trên — `user` đã chắc chắn non-null)
   const isAdmin = user.role === "admin";
   const isTeacher = user.role === "teacher";
-  const isTeacherOrAdmin = isAdmin || isTeacher;
+  const isParent = user.role === "parent";
+  const isStaff = isAdmin || isTeacher || isParent;
 
   // 3. Đã đăng nhập → app chính
   return (
@@ -475,6 +479,8 @@ export default function App() {
             <AdminDashboard />
           ) : isTeacher ? (
             <TeacherDashboard />
+          ) : isParent ? (
+            <ParentDashboard />
           ) : (
             <AnimatePresence mode="wait">
               {activeTab === "dashboard" && (
@@ -514,8 +520,8 @@ export default function App() {
           )}
         </main>
 
-        {/* MOBILE BOTTOM NAV — chỉ HS mới có */}
-        {!isTeacherOrAdmin && (
+        {/* MOBILE BOTTOM NAV — chỉ HS mới có (staff = admin/teacher/parent dùng dashboard riêng) */}
+        {!isStaff && (
           <nav
             className="fixed bottom-0 inset-x-0 z-40 px-3 py-2.5 border-t backdrop-blur-lg md:hidden"
             style={{
@@ -549,7 +555,7 @@ export default function App() {
         )}
 
         {/* DESKTOP FLOATING SIDE NAV — chỉ HS mới có */}
-        {!isTeacherOrAdmin && (
+        {!isStaff && (
           <div
             className="hidden md:flex fixed left-5 top-1/2 -translate-y-1/2 flex-col gap-2 p-2 rounded-2xl border backdrop-blur-md z-40 shadow-lg"
             style={{
