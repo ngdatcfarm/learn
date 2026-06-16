@@ -11,14 +11,12 @@ import {
   Check,
   Trophy,
   MessageCircleHeart,
-  TrendingUp,
-  Minus,
-  TrendingDown,
 } from "lucide-react";
-import { UserProfile, ReadingExercise, SKILL_META, SkillId } from "../types";
+import { UserProfile, ReadingExercise, SkillId } from "../types";
 import { READING_EXERCISES } from "../data/coursesData";
 import sound from "../utils/sound";
 import { recordMeasurement, trackEvent } from "../api/client";
+import SkillCard from "./ui/SkillCard";
 
 interface DashboardProps {
   profile: UserProfile;
@@ -84,32 +82,7 @@ export default function Dashboard({ profile, setProfile, onNavigate, onMeasured 
     Math.round((profile.engagement.avgSessionMinutes / profile.dailyGoalMinutes) * 100)
   );
 
-  // Format giá trị primary metric cho mỗi skill (theo SKILL_META)
-  const formatSkillValue = (skill: SkillId, val: number): string => {
-    if (skill === "write") return val === 0 ? "—" : `${val}/10`;
-    if (skill === "speak") return val === 0 ? "—" : `${val} wpm`;
-    if (skill === "learn") return `${val} từ`;
-    return val === 0 ? "—" : `${val}%`;
-  };
-
-  // Tính % tiến bộ cho mỗi skill (so với mức "trưởng thành" định nghĩa tạm)
-  // Mục đích: hiển thị bar, không phải điểm tuyệt đối.
-  const skillProgressPct: Record<SkillId, number> = {
-    read: profile.skills.read.attempts === 0 ? 0 : profile.skills.read.readComprehension,
-    write: profile.skills.write.attempts === 0 ? 0 : profile.skills.write.writeCoherence * 10,
-    listen: profile.skills.listen.attempts === 0 ? 0 : profile.skills.listen.listenAccuracy,
-    speak: profile.skills.speak.attempts === 0 ? 0 : profile.skills.speak.speakPronunciation,
-    learn: profile.skills.learn.attempts === 0 ? 0 : profile.skills.learn.vocabRetention,
-  };
-
   const skillOrder: SkillId[] = ["read", "write", "listen", "speak", "learn"];
-
-  const trendIcon = (trend: string) => {
-    if (trend === "improving") return <TrendingUp className="w-3 h-3" style={{ color: "var(--success)" }} />;
-    if (trend === "declining") return <TrendingDown className="w-3 h-3" style={{ color: "var(--danger)" }} />;
-    if (trend === "stable") return <Minus className="w-3 h-3" style={{ color: "var(--muted)" }} />;
-    return null;
-  };
 
   return (
     <div className="w-full max-w-5xl mx-auto space-y-6">
@@ -240,92 +213,9 @@ export default function Dashboard({ profile, setProfile, onNavigate, onMeasured 
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-5 gap-2.5">
-                {skillOrder.map((sid) => {
-                  const meta = SKILL_META[sid];
-                  const sk = profile.skills[sid];
-                  const val = (sk as any)[meta.primaryMetric] as number;
-                  const pct = skillProgressPct[sid];
-                  const isNew = sk.attempts === 0;
-                  // Delta vs hôm qua
-                  const d = (sk as any).todayDelta as number | null;
-                  const deltaArrow = d == null ? "—" : d > 0 ? "↑" : d < 0 ? "↓" : "→";
-                  const deltaColor =
-                    d == null
-                      ? "var(--muted)"
-                      : d > 0
-                      ? "var(--success)"
-                      : d < 0
-                      ? "var(--danger)"
-                      : "var(--muted)";
-                  const deltaText =
-                    d == null
-                      ? "Chưa có hôm qua"
-                      : `${deltaArrow}${Math.abs(d)}% vs hôm qua`;
-                  // Delta vs tuần trước (tooltip)
-                  const w = (sk as any).weekDelta as number | null;
-                  const weekText =
-                    w == null
-                      ? ""
-                      : `${w > 0 ? "↑" : w < 0 ? "↓" : "→"}${Math.abs(w)}% vs tuần trước`;
-
-                  return (
-                    <div
-                      key={sid}
-                      className="p-3 rounded-2xl border space-y-1.5"
-                      style={{
-                        backgroundColor: "var(--bg-soft)",
-                        borderColor: isNew ? "var(--border-soft)" : meta.color,
-                      }}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="text-base leading-none">{meta.emoji}</span>
-                        {trendIcon(sk.trend)}
-                      </div>
-                      <div>
-                        <div
-                          className="text-[10px] font-extrabold uppercase tracking-wide"
-                          style={{ color: "var(--muted)" }}
-                        >
-                          {meta.label}
-                        </div>
-                        <div
-                          className="text-sm font-extrabold"
-                          style={{ color: isNew ? "var(--muted)" : meta.color }}
-                        >
-                          {formatSkillValue(sid, val)}
-                        </div>
-                      </div>
-                      <div
-                        className="w-full h-1 rounded-full overflow-hidden"
-                        style={{ backgroundColor: "var(--bg-elevated)" }}
-                      >
-                        <div
-                          className="h-full rounded-full transition-all"
-                          style={{
-                            width: `${pct}%`,
-                            backgroundColor: meta.color,
-                          }}
-                        />
-                      </div>
-                      <div
-                        className="text-[9px] font-bold"
-                        style={{ color: "var(--muted)" }}
-                      >
-                        {meta.primaryLabel} · {sk.attempts} lần
-                      </div>
-                      {/* Step 2: so sánh với chính mình */}
-                      {!isNew && (
-                        <div
-                          className="text-[9px] font-extrabold flex items-center gap-1"
-                          style={{ color: deltaColor }}
-                          title={weekText ? `Tuần: ${weekText}` : undefined}
-                        >
-                          <span>{deltaText}</span>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                {skillOrder.map((sid) => (
+                  <SkillCard key={sid} skillId={sid} skill={profile.skills[sid]} size="md" />
+                ))}
               </div>
             </div>
 

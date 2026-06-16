@@ -247,8 +247,28 @@ export interface TeacherDashboardResponse {
 }
 
 export interface ParentDashboard {
-  children: Array<ApiUser & { skills: SkillsResponse["skills"]; engagement: SkillsResponse["engagement"] }>;
+  parent: { id: string; name: string; username: string; phone: string | null };
+  children: Array<ParentChild>;
   count: number;
+}
+
+export interface ParentChild {
+  id: string;
+  name: string;
+  username: string;
+  level: string | null;
+  cefr_level: string | null;
+  goal: string | null;
+  relationship: string | null;
+  skills: SkillsResponse["skills"];
+  engagement: SkillsResponse["engagement"];
+  today: {
+    task_done_today: number;
+    minutes_today: number;
+    measurements_today: number;
+  };
+  needsHelp: boolean;
+  helpReasons: string[];
 }
 
 /**
@@ -261,6 +281,16 @@ export async function getTeacherDashboard(): Promise<TeacherDashboardResponse> {
 
 export async function getParentDashboard(): Promise<ParentDashboard> {
   return request<ParentDashboard>("GET", "/api/dashboard/parent");
+}
+
+/**
+ * PATCH /api/me/phone — Cập nhật SĐT cho user hiện tại (PH dùng để nhận Zalo report).
+ * Body: { phone: string | null } — null để xóa
+ */
+export async function updateMyPhone(
+  phone: string | null
+): Promise<{ ok: boolean; phone: string | null }> {
+  return request("PATCH", "/api/me/phone", { phone });
 }
 
 // ============================================================

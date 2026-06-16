@@ -21,6 +21,7 @@ import {
   StudentWithStats,
 } from "../api/client";
 import sound from "../utils/sound";
+import { formatSkillValue } from "../utils/format";
 import KpiCard from "./ui/KpiCard";
 
 // ============================================================
@@ -28,18 +29,6 @@ import KpiCard from "./ui/KpiCard";
 // ============================================================
 
 const SKILL_ORDER: SkillId[] = ["read", "write", "listen", "speak", "learn"];
-
-/**
- * Map primary metric (theo SKILL_META) sang giá trị hiển thị.
- * Skill cell dùng cái này để hiện "100%", "8/10", "120 wpm", "150 từ".
- */
-function formatSkillValue(skill: SkillId, val: number): string {
-  if (val === 0) return "—";
-  if (skill === "write") return `${val}/10`;
-  if (skill === "speak") return `${val} wpm`;
-  if (skill === "learn") return `${val} từ`;
-  return `${val}%`;
-}
 
 /**
  * Lấy primary metric value từ 1 skill state.
