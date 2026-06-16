@@ -453,6 +453,7 @@ export function EditUserModal({
 
 function RelationshipsSection({ user }: { user: AdminUser }) {
   const isStudent = user.role === "student";
+  const isParent = user.role === "parent";
   const oppositeRole = isStudent ? "parent" : "student";
   const oppositeLabel = isStudent ? "phụ huynh" : "học sinh";
 
@@ -480,12 +481,37 @@ function RelationshipsSection({ user }: { user: AdminUser }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user.id]);
 
-  // Search opposite-role users (debounced)
+  // Initial load: fetch immediately so list is ready when user opens picker
   useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const u = await adminListUsers({
+          role: oppositeRole,
+          parentless: isParent,
+        });
+        if (!cancelled) setCandidates(u.users);
+      } catch (e) {
+        console.warn("Initial load failed:", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user.id, oppositeRole, isParent]);
+
+  // Search: debounced refetch (only when user types)
+  useEffect(() => {
+    if (!search) return; // initial-load effect handles empty case
     let cancelled = false;
     const t = setTimeout(async () => {
       try {
-        const u = await adminListUsers({ role: oppositeRole, search: search || undefined });
+        const u = await adminListUsers({
+          role: oppositeRole,
+          search,
+          parentless: isParent,
+        });
         if (!cancelled) setCandidates(u.users);
       } catch (e) {
         console.warn("Search failed:", e);
@@ -495,7 +521,7 @@ function RelationshipsSection({ user }: { user: AdminUser }) {
       cancelled = true;
       clearTimeout(t);
     };
-  }, [search, oppositeRole]);
+  }, [search, oppositeRole, isParent]);
 
   const handleAdd = async (
     candidateId: string,
@@ -585,7 +611,13 @@ function RelationshipsSection({ user }: { user: AdminUser }) {
                 className="text-xs text-center py-2"
                 style={{ color: "var(--muted)" }}
               >
-                {search ? "Không tìm thấy." : `Tất cả ${oppositeLabel} đã được liên kết.`}
+                {search
+                  ? "Không tìm thấy."
+                  : candidates.length === 0
+                    ? "Đang tải..."
+                    : isParent
+                      ? "Tất cả học sinh đã có phụ huynh."
+                      : `Tất cả ${oppositeLabel} đã được liên kết.`}
               </p>
             ) : (
               availableCandidates.slice(0, 20).map((c) => (

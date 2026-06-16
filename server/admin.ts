@@ -121,6 +121,7 @@ adminRouter.get("/users", async (req: Request, res: Response) => {
   const role = (req.query.role as string) || "";
   const search = (req.query.search as string) || "";
   const showDeleted = req.query.deleted === "1" || req.query.deleted === "true";
+  const parentless = req.query.parentless === "1" || req.query.parentless === "true";
 
   const conditions: string[] = [];
   const params: any[] = [];
@@ -133,6 +134,9 @@ adminRouter.get("/users", async (req: Request, res: Response) => {
     conditions.push("(u.username LIKE ? OR u.name LIKE ?)");
     const like = `%${search}%`;
     params.push(like, like);
+  }
+  if (parentless) {
+    conditions.push("u.id NOT IN (SELECT student_id FROM parent_links)");
   }
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 

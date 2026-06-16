@@ -429,11 +429,13 @@ export async function adminListUsers(opts: {
   role?: string;
   search?: string;
   includeDeleted?: boolean;
+  parentless?: boolean;
 } = {}): Promise<{ users: AdminUser[] }> {
   const params = new URLSearchParams();
   if (opts.role) params.set("role", opts.role);
   if (opts.search) params.set("search", opts.search);
   if (opts.includeDeleted) params.set("deleted", "1");
+  if (opts.parentless) params.set("parentless", "1");
   const q = params.toString();
   return request("GET", `/api/admin/users${q ? `?${q}` : ""}`);
 }
