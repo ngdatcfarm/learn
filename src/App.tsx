@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, createContext, useContext } from "react";
+import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Bot,
@@ -28,6 +28,7 @@ import {
   getMySkills,
   logout as apiLogout,
   trackEvent,
+  getUnreadCount,
   SkillsResponse,
   SkillState,
 } from "./api/client";
@@ -40,6 +41,8 @@ import LoginScreen from "./components/LoginScreen";
 import TeacherDashboard from "./components/TeacherDashboard";
 import AdminDashboard from "./components/AdminDashboard";
 import ParentDashboard from "./components/ParentDashboard";
+import { InboxBell } from "./components/InboxBell";
+import InboxPopup from "./components/InboxPopup";
 
 type Theme = "light" | "dark";
 
@@ -122,6 +125,8 @@ export default function App() {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [theme, setTheme] = useState<Theme>("dark");
+  const [inboxOpen, setInboxOpen] = useState(false);
+  const [inboxUnreadCount, setInboxUnreadCount] = useState(0);
   // Ref track session start time cho session_end
   const sessionStartRef = useRef<number | null>(null);
 
@@ -265,6 +270,38 @@ export default function App() {
       sendSessionEnd("logout");
     };
   }, [user]);
+
+  // ============================================================
+  // Inbox: poll unread count mỗi 30s (pause khi tab ẩn)
+  // → update red dot trên bell
+  // ============================================================
+  const refreshUnread = useCallback(async () => {
+    if (!user) return;
+    try {
+      const res = await getUnreadCount();
+      setInboxUnreadCount(res.count);
+    } catch {
+      // best-effort: skip on error
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) {
+      setInboxUnreadCount(0);
+      return;
+    }
+    refreshUnread();
+    const tick = () => {
+      if (document.visibilityState === "visible") refreshUnread();
+    };
+    const id = setInterval(tick, 30_000);
+    const onVis = () => tick();
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [user, refreshUnread]);
 
   // ============================================================
   // refreshSkills: child components gọi sau khi recordMeasurement
@@ -453,6 +490,15 @@ export default function App() {
                 {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
               </button>
 
+              <InboxBell
+                unreadCount={inboxUnreadCount}
+                onClick={() => {
+                  sound.playClick();
+                  setInboxOpen(true);
+                }}
+                theme={theme}
+              />
+
               <button
                 onClick={() => {
                   sound.playClick();
@@ -600,6 +646,14 @@ export default function App() {
             />
           )}
         </AnimatePresence>
+
+        {/* INBOX POPUP — slide-out từ header bell (mọi role) */}
+        <InboxPopup
+          open={inboxOpen}
+          onClose={() => setInboxOpen(false)}
+          user={user}
+          onUnreadChange={setInboxUnreadCount}
+        />
       </div>
     </ThemeContext.Provider>
   );

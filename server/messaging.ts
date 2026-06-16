@@ -1,17 +1,30 @@
 /**
- * server/messaging.ts — Inbox nội bộ (PH ↔ GV/Admin + broadcast)
+ * server/messaging.ts — Inbox nội bộ (HS/PH ↔ GV/Admin + broadcast)
  * Step 7
  *
  * Routes (mounted at /api/messages):
- *   GET    /threads                            — List threads (PH: direct + matching broadcasts; GV: direct + matching broadcasts; Admin: all)
+ *   GET    /threads                            — List threads (HS: direct + matching broadcasts; PH: direct + matching broadcasts; GV: direct + matching broadcasts; Admin: all)
  *   POST   /threads                            — Tạo direct thread (body: { recipient_id, body }) hoặc broadcast (body: { type:'broadcast', subject, target_role, target_class_id, body })
  *   GET    /threads/:id                        — Thread + messages + participants; auto-mark read
  *   POST   /threads/:id/messages               — Gửi message (direct: any participant; broadcast: chỉ creator hoặc admin)
  *   POST   /threads/:id/read                   — Idempotent upsert last_read_at
  *   GET    /unread-count                       — Số message chưa đọc (badge)
- *   GET    /eligible-recipients                — User có thể nhắn (PH: GV+admin của con; GV: PH+admin; Admin: any)
+ *   GET    /eligible-recipients                — User có thể nhắn (HS: GV+admin+PH của mình; PH: GV+admin của con; GV: HS+PH+admin; Admin: any)
  *
- * Auth: requireRole ["parent","teacher","admin"]. Admin bypasses scoping checks.
+ * Auth: requireRole ["student","parent","teacher","admin"]. Admin bypasses scoping checks.
+ *
+ * Pair rules (caller ↔ recipient):
+ *   - Admin ↔ any (pass)
+ *   - Student ↔ Admin / Teacher-of-my-class / My-parent
+ *   - PH ↔ Admin / Teacher-of-my-kid's-class
+ *   - Teacher ↔ Admin / PH-of-my-class / Student-in-my-class
+ *   - Same role (except admin): 403
+ *
+ * Broadcast:
+ *   - Only admin/teacher can create broadcast (student/parent → 403)
+ *   - target_role: "student" | "parent" | "teacher" | "all"
+ *   - Teacher restricted: target_role ∈ {parent, all, student} (not teacher) + must own target_class_id
+ *   - Admin unrestricted
  *
  * Audit (PII-safe):
  *   - thread.create      → details: { recipient_id, recipient_name, body_length }
@@ -146,9 +159,16 @@ async function getParticipants(
 }
 
 /**
- * Lấy tất cả class_id mà user là participant hoặc (nếu là teacher) teacher.
+ * Lấy tất cả class_id mà user có quan hệ (student: trong lớp; PH: của con; GV: dạy).
  */
 async function getUserScopeClassIds(user: AuthUser): Promise<string[]> {
+  if (user.role === "student") {
+    const rows = (await query<RowDataPacket[]>(
+      `SELECT DISTINCT class_id FROM class_members WHERE student_id = ?`,
+      [user.id]
+    )) as RowDataPacket[];
+    return rows.map((r) => r.class_id as string);
+  }
   if (user.role === "parent") {
     const rows = (await query<RowDataPacket[]>(
       `SELECT DISTINCT cm.class_id
@@ -183,6 +203,7 @@ function broadcastMatchesUser(
   // target_role = 'parent' → PH xem
   if (thread.target_role === "parent" && user.role === "parent") return true;
   if (thread.target_role === "teacher" && user.role === "teacher") return true;
+  if (thread.target_role === "student" && user.role === "student") return true;
   // target_class_id (optional) → thêm scope: user phải thuộc class đó
   if (thread.target_class_id) {
     return userClassIds.includes(thread.target_class_id);
@@ -198,7 +219,7 @@ function broadcastMatchesUser(
  * GET /api/messages/threads
  */
 messagingRouter.get("/threads", async (req: Request, res: Response) => {
-  const user = await requireRole(req, res, ["parent", "teacher", "admin"]);
+  const user = await requireRole(req, res, ["student", "parent", "teacher", "admin"]);
   if (!user) return;
 
   // 1. Fetch direct threads (caller là participant)
@@ -252,9 +273,12 @@ messagingRouter.get("/threads", async (req: Request, res: Response) => {
     // PH/GV: filter theo target_role và target_class_id
     const classIds = await getUserScopeClassIds(user);
     // Build IN clause cho target_role match
-    // (PH: target_role in ('parent','all'); GV: target_role in ('teacher','all'))
+    // (HS: target_role in ('student','all'); PH: ('parent','all'); GV: ('teacher','all'))
     const allowedRoles =
-      user.role === "parent" ? ["parent", "all"] : ["teacher", "all"];
+      user.role === "parent" ? ["parent", "all"]
+      : user.role === "teacher" ? ["teacher", "all"]
+      : user.role === "student" ? ["student", "all"]
+      : [];
     if (classIds.length === 0) {
       // No class scope → only role-based broadcasts
       broadcastThreads = (await query<ThreadRow[]>(
@@ -367,7 +391,7 @@ messagingRouter.get("/threads", async (req: Request, res: Response) => {
  *   - body: required
  */
 messagingRouter.post("/threads", async (req: Request, res: Response) => {
-  const user = await requireRole(req, res, ["parent", "teacher", "admin"]);
+  const user = await requireRole(req, res, ["student", "parent", "teacher", "admin"]);
   if (!user) return;
 
   const body = req.body || {};
@@ -375,8 +399,8 @@ messagingRouter.post("/threads", async (req: Request, res: Response) => {
 
   if (isBroadcast) {
     // Only admin/teacher can broadcast
-    if (user.role === "parent") {
-      return res.status(403).json({ error: "PH không thể tạo broadcast." });
+    if (user.role === "parent" || user.role === "student") {
+      return res.status(403).json({ error: "Chỉ giáo viên hoặc admin mới có thể gửi broadcast." });
     }
     const subject = String(body.subject || "").trim();
     const targetRole = body.target_role;
@@ -384,10 +408,10 @@ messagingRouter.post("/threads", async (req: Request, res: Response) => {
     const text = String(body.body || "").trim();
     if (!subject) return res.status(400).json({ error: "Thiếu subject." });
     if (!text) return res.status(400).json({ error: "Thiếu body." });
-    if (!["parent", "teacher", "all"].includes(targetRole)) {
-      return res.status(400).json({ error: "target_role phải là parent | teacher | all." });
+    if (!["student", "parent", "teacher", "all"].includes(targetRole)) {
+      return res.status(400).json({ error: "target_role phải là student | parent | teacher | all." });
     }
-    // Teacher chỉ được broadcast về PH của lớp mình
+    // Teacher chỉ được broadcast về PH/HS của lớp mình, không broadcast tới GV khác
     if (user.role === "teacher" && targetRole === "teacher") {
       return res.status(403).json({ error: "GV không thể broadcast tới GV khác." });
     }
@@ -418,6 +442,14 @@ messagingRouter.post("/threads", async (req: Request, res: Response) => {
             [targetClassId]
           );
           recipientCount = row?.c ?? 0;
+        } else if (targetRole === "student") {
+          const row = await queryOne<RowDataPacket & { c: number }>(
+            `SELECT COUNT(*) AS c FROM class_members cm
+             JOIN users u ON u.id = cm.student_id
+             WHERE cm.class_id = ? AND u.deleted_at IS NULL`,
+            [targetClassId]
+          );
+          recipientCount = row?.c ?? 0;
         } else {
           const row = await queryOne<RowDataPacket & { c: number }>(
             `SELECT COUNT(*) AS c FROM users WHERE role=? AND deleted_at IS NULL`,
@@ -427,7 +459,7 @@ messagingRouter.post("/threads", async (req: Request, res: Response) => {
         }
       } else if (targetRole === "all") {
         const row = await queryOne<RowDataPacket & { c: number }>(
-          `SELECT COUNT(*) AS c FROM users WHERE role IN ('parent','teacher') AND deleted_at IS NULL`
+          `SELECT COUNT(*) AS c FROM users WHERE role IN ('student','parent','teacher') AND deleted_at IS NULL`
         );
         recipientCount = row?.c ?? 0;
       } else {
@@ -438,7 +470,7 @@ messagingRouter.post("/threads", async (req: Request, res: Response) => {
         recipientCount = row?.c ?? 0;
       }
     } else {
-      // Teacher: count parents of own classes
+      // Teacher: count parents + students of own classes
       if (targetRole === "parent") {
         const row = await queryOne<RowDataPacket & { c: number }>(
           `SELECT COUNT(DISTINCT pl.parent_id) AS c
@@ -451,16 +483,34 @@ messagingRouter.post("/threads", async (req: Request, res: Response) => {
           targetClassId ? [user.id, targetClassId] : [user.id]
         );
         recipientCount = row?.c ?? 0;
-      } else if (targetRole === "all") {
-        // Teacher: all parents of own classes (treat "all" as parents for teacher)
+      } else if (targetRole === "student") {
         const row = await queryOne<RowDataPacket & { c: number }>(
-          `SELECT COUNT(DISTINCT pl.parent_id) AS c
-           FROM parent_links pl
-           JOIN class_members cm ON cm.student_id = pl.student_id
+          `SELECT COUNT(*) AS c FROM class_members cm
            JOIN classes c ON c.id = cm.class_id
-           JOIN users u ON u.id = pl.parent_id
-           WHERE c.teacher_id = ? AND u.deleted_at IS NULL`,
-          [user.id]
+           JOIN users u ON u.id = cm.student_id
+           WHERE c.teacher_id = ? AND u.deleted_at IS NULL
+             ${targetClassId ? "AND c.id = ?" : ""}`,
+          targetClassId ? [user.id, targetClassId] : [user.id]
+        );
+        recipientCount = row?.c ?? 0;
+      } else if (targetRole === "all") {
+        // Teacher: all parents + students of own classes
+        const row = await queryOne<RowDataPacket & { c: number }>(
+          `SELECT (
+             (SELECT COUNT(DISTINCT pl.parent_id)
+              FROM parent_links pl
+              JOIN class_members cm ON cm.student_id = pl.student_id
+              JOIN classes c ON c.id = cm.class_id
+              JOIN users u ON u.id = pl.parent_id
+              WHERE c.teacher_id = ? AND u.deleted_at IS NULL)
+             +
+             (SELECT COUNT(*)
+              FROM class_members cm
+              JOIN classes c ON c.id = cm.class_id
+              JOIN users u ON u.id = cm.student_id
+              WHERE c.teacher_id = ? AND u.deleted_at IS NULL)
+           ) AS c`,
+          [user.id, user.id]
         );
         recipientCount = row?.c ?? 0;
       }
@@ -663,11 +713,12 @@ messagingRouter.post("/threads", async (req: Request, res: Response) => {
 /**
  * Helper: check pair rule giữa caller và recipient.
  * - Admin ↔ any (pass)
- * - PH ↔ Admin (pass)
- * - GV ↔ Admin (pass)
- * - PH ↔ GV: PH phải có con trong lớp GV dạy
- * - GV ↔ PH: GV phải dạy lớp có con của PH
- * - Same role: chỉ admin được
+ * - Student ↔ Admin (pass)
+ * - Student ↔ Teacher: HS phải trong lớp GV dạy
+ * - Student ↔ Parent: PH phải là PH của HS
+ * - PH ↔ Admin / Teacher-of-my-kid's-class / My-child
+ * - Teacher ↔ Admin / PH-of-my-class / Student-in-my-class
+ * - Same role (except admin): 403
  */
 async function checkRecipientPair(
   user: AuthUser,
@@ -676,10 +727,56 @@ async function checkRecipientPair(
 ): Promise<boolean> {
   if (user.role === "admin") return true;
   if (recipientRole === "admin") return true;
-  if (user.role === "parent" && recipientRole === "parent") return false;
-  if (user.role === "teacher" && recipientRole === "teacher") return false;
+
+  // Same-role chỉ admin được (đã check ở trên)
+  if (user.role === recipientRole) return false;
+
+  // Student → Teacher
+  if (user.role === "student" && recipientRole === "teacher") {
+    const row = await queryOne(
+      `SELECT 1 FROM class_members cm
+       JOIN classes c ON c.id = cm.class_id
+       WHERE cm.student_id = ? AND c.teacher_id = ?
+       LIMIT 1`,
+      [user.id, recipientId]
+    );
+    return !!row;
+  }
+
+  // Student → Parent
+  if (user.role === "student" && recipientRole === "parent") {
+    const row = await queryOne(
+      `SELECT 1 FROM parent_links WHERE student_id = ? AND parent_id = ?
+       LIMIT 1`,
+      [user.id, recipientId]
+    );
+    return !!row;
+  }
+
+  // Teacher → Student
+  if (user.role === "teacher" && recipientRole === "student") {
+    const row = await queryOne(
+      `SELECT 1 FROM class_members cm
+       JOIN classes c ON c.id = cm.class_id
+       WHERE cm.student_id = ? AND c.teacher_id = ?
+       LIMIT 1`,
+      [recipientId, user.id]
+    );
+    return !!row;
+  }
+
+  // Parent → Student (own child)
+  if (user.role === "parent" && recipientRole === "student") {
+    const row = await queryOne(
+      `SELECT 1 FROM parent_links WHERE student_id = ? AND parent_id = ?
+       LIMIT 1`,
+      [recipientId, user.id]
+    );
+    return !!row;
+  }
+
+  // PH → Teacher: PH phải có con trong lớp của GV
   if (user.role === "parent" && recipientRole === "teacher") {
-    // PH phải có con trong lớp của GV
     const row = await queryOne(
       `SELECT 1
        FROM parent_links pl
@@ -691,8 +788,9 @@ async function checkRecipientPair(
     );
     return !!row;
   }
+
+  // Teacher → Parent: GV phải dạy lớp có con của PH
   if (user.role === "teacher" && recipientRole === "parent") {
-    // GV phải dạy lớp có con của PH
     const row = await queryOne(
       `SELECT 1
        FROM classes c
@@ -704,6 +802,7 @@ async function checkRecipientPair(
     );
     return !!row;
   }
+
   return false;
 }
 
@@ -711,7 +810,7 @@ async function checkRecipientPair(
  * GET /api/messages/threads/:id
  */
 messagingRouter.get("/threads/:id", async (req: Request, res: Response) => {
-  const user = await requireRole(req, res, ["parent", "teacher", "admin"]);
+  const user = await requireRole(req, res, ["student", "parent", "teacher", "admin"]);
   if (!user) return;
 
   const threadId = req.params.id;
@@ -809,7 +908,7 @@ messagingRouter.get("/threads/:id", async (req: Request, res: Response) => {
  * body: { body }
  */
 messagingRouter.post("/threads/:id/messages", async (req: Request, res: Response) => {
-  const user = await requireRole(req, res, ["parent", "teacher", "admin"]);
+  const user = await requireRole(req, res, ["student", "parent", "teacher", "admin"]);
   if (!user) return;
 
   const threadId = req.params.id;
@@ -895,7 +994,7 @@ messagingRouter.post("/threads/:id/messages", async (req: Request, res: Response
  * Idempotent upsert
  */
 messagingRouter.post("/threads/:id/read", async (req: Request, res: Response) => {
-  const user = await requireRole(req, res, ["parent", "teacher", "admin"]);
+  const user = await requireRole(req, res, ["student", "parent", "teacher", "admin"]);
   if (!user) return;
 
   const threadId = req.params.id;
@@ -945,7 +1044,7 @@ messagingRouter.post("/threads/:id/read", async (req: Request, res: Response) =>
  * Đếm tổng số message chưa đọc (direct + broadcast match)
  */
 messagingRouter.get("/unread-count", async (req: Request, res: Response) => {
-  const user = await requireRole(req, res, ["parent", "teacher", "admin"]);
+  const user = await requireRole(req, res, ["student", "parent", "teacher", "admin"]);
   if (!user) return;
 
   // Direct: đếm messages trong thread mà user là participant, chưa đọc
@@ -979,7 +1078,10 @@ messagingRouter.get("/unread-count", async (req: Request, res: Response) => {
   } else {
     const classIds = await getUserScopeClassIds(user);
     const allowedRoles =
-      user.role === "parent" ? ["parent", "all"] : ["teacher", "all"];
+      user.role === "parent" ? ["parent", "all"]
+      : user.role === "teacher" ? ["teacher", "all"]
+      : user.role === "student" ? ["student", "all"]
+      : [];
     if (classIds.length === 0) {
       const r = (await queryOne<RowDataPacket & { c: number }>(
         `SELECT COUNT(*) AS c
@@ -1014,12 +1116,13 @@ messagingRouter.get("/unread-count", async (req: Request, res: Response) => {
 
 /**
  * GET /api/messages/eligible-recipients
+ * HS: admin + teachers of HS's class + parents of HS
  * PH: admin + teachers of PH's kids' classes
- * GV: admin + parents of GV's classes
+ * GV: admin + parents of GV's classes + students in GV's classes
  * Admin: all non-deleted users (except self)
  */
 messagingRouter.get("/eligible-recipients", async (req: Request, res: Response) => {
-  const user = await requireRole(req, res, ["parent", "teacher", "admin"]);
+  const user = await requireRole(req, res, ["student", "parent", "teacher", "admin"]);
   if (!user) return;
 
   let recipients: Array<{
@@ -1035,6 +1138,33 @@ messagingRouter.get("/eligible-recipients", async (req: Request, res: Response) 
        WHERE deleted_at IS NULL AND id != ?
        ORDER BY role, name`,
       [user.id]
+    )) as RowDataPacket[];
+    recipients = rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      username: r.username,
+      role: r.role as any,
+    }));
+  } else if (user.role === "student") {
+    // Admin + teachers of HS's class + parents of HS
+    const rows = (await query<RowDataPacket[]>(
+      `SELECT DISTINCT u.id, u.name, u.username, u.role
+       FROM users u
+       WHERE u.deleted_at IS NULL
+         AND (
+           u.role = 'admin'
+           OR (u.role = 'teacher' AND u.id IN (
+             SELECT DISTINCT c.teacher_id
+             FROM classes c
+             JOIN class_members cm ON cm.class_id = c.id
+             WHERE cm.student_id = ?
+           ))
+           OR (u.role = 'parent' AND u.id IN (
+             SELECT parent_id FROM parent_links WHERE student_id = ?
+           ))
+         )
+       ORDER BY u.role, u.name`,
+      [user.id, user.id]
     )) as RowDataPacket[];
     recipients = rows.map((r) => ({
       id: r.id,
@@ -1068,7 +1198,7 @@ messagingRouter.get("/eligible-recipients", async (req: Request, res: Response) 
       role: r.role as any,
     }));
   } else if (user.role === "teacher") {
-    // Admin + parents of GV's classes
+    // Admin + parents of GV's classes + students in GV's classes
     const rows = (await query<RowDataPacket[]>(
       `SELECT DISTINCT u.id, u.name, u.username, u.role
        FROM users u
@@ -1082,9 +1212,15 @@ messagingRouter.get("/eligible-recipients", async (req: Request, res: Response) 
              JOIN classes c ON c.id = cm.class_id
              WHERE c.teacher_id = ?
            ))
+           OR (u.role = 'student' AND u.id IN (
+             SELECT DISTINCT cm.student_id
+             FROM class_members cm
+             JOIN classes c ON c.id = cm.class_id
+             WHERE c.teacher_id = ?
+           ))
          )
        ORDER BY u.role, u.name`,
-      [user.id]
+      [user.id, user.id]
     )) as RowDataPacket[];
     recipients = rows.map((r) => ({
       id: r.id,

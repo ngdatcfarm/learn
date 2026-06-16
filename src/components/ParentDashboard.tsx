@@ -24,15 +24,13 @@ import sound from "../utils/sound";
 import SkillCard from "./ui/SkillCard";
 import KpiCard from "./ui/KpiCard";
 import { Field, inputStyle, inputClass } from "./ui/Field";
-import InboxSection from "./InboxSection";
 
-type Section = "overview" | "inbox" | "settings";
+type Section = "overview" | "settings";
 
 const SKILL_ORDER: SkillId[] = ["read", "write", "listen", "speak", "learn"];
 
 const SECTIONS: { id: Section; label: string; emoji: string }[] = [
   { id: "overview", label: "Tổng quan", emoji: "📊" },
-  { id: "inbox", label: "Hộp thư", emoji: "📬" },
   { id: "settings", label: "Cài đặt", emoji: "⚙️" },
 ];
 
@@ -43,11 +41,9 @@ const SECTIONS: { id: Section; label: string; emoji: string }[] = [
 function SectionNav({
   active,
   onChange,
-  unreadCount = 0,
 }: {
   active: Section;
   onChange: (s: Section) => void;
-  unreadCount?: number;
 }) {
   return (
     <div
@@ -72,14 +68,6 @@ function SectionNav({
           >
             <span className="text-sm leading-none">{s.emoji}</span>
             <span className="hidden sm:inline">{s.label}</span>
-            {s.id === "inbox" && unreadCount > 0 && (
-              <span
-                className="ml-1 px-1.5 py-0.5 text-[9px] font-extrabold rounded-full"
-                style={{ backgroundColor: "var(--danger)", color: "white" }}
-              >
-                {unreadCount > 99 ? "99+" : unreadCount}
-              </span>
-            )}
           </button>
         );
       })}
@@ -538,7 +526,6 @@ export default function ParentDashboard() {
   const [data, setData] = useState<ParentDashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [unreadCount, setUnreadCount] = useState(0);
 
   const load = useCallback(async (showSpinner = true) => {
     if (showSpinner) setLoading(true);
@@ -562,14 +549,6 @@ export default function ParentDashboard() {
     setRefreshing(true);
     load(false);
   };
-
-  // Khi user chuyển sang inbox → reset badge unread (InboxSection sẽ tự load lại data mới)
-  useEffect(() => {
-    if (section === "inbox") {
-      // Optimistic: giảm dần qua polling. InboxSection.onUnreadChange sẽ gọi lại
-      setUnreadCount(0);
-    }
-  }, [section]);
 
   // 1. Initial loading
   if (loading) {
@@ -678,7 +657,7 @@ export default function ParentDashboard() {
       </motion.div>
 
       {/* Section nav */}
-      <SectionNav active={section} onChange={setSection} unreadCount={unreadCount} />
+      <SectionNav active={section} onChange={setSection} />
 
       {/* Section content */}
       <AnimatePresence mode="wait">
@@ -691,20 +670,6 @@ export default function ParentDashboard() {
             transition={{ duration: 0.15 }}
           >
             <OverviewSection data={data} />
-          </motion.div>
-        )}
-        {section === "inbox" && (
-          <motion.div
-            key="inbox"
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            transition={{ duration: 0.15 }}
-          >
-            <InboxSection
-              role="parent"
-              onUnreadChange={setUnreadCount}
-            />
           </motion.div>
         )}
         {section === "settings" && (

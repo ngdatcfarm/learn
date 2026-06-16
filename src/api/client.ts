@@ -650,7 +650,7 @@ export interface CreateDirectThreadPayload {
 export interface CreateBroadcastPayload {
   type: "broadcast";
   subject: string;
-  target_role: "parent" | "teacher" | "all";
+  target_role: "student" | "parent" | "teacher" | "all";
   target_class_id?: string | null;
   body: string;
 }

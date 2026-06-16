@@ -1,25 +1,28 @@
 /**
- * src/components/InboxSection.tsx — Shared inbox UI (Step 7 polish)
+ * src/components/InboxPopup.tsx — Slide-out inbox popup (header bell → open)
  *
- * Dùng bởi ParentDashboard, TeacherDashboard, AdminDashboard.
+ * Dùng bởi App.tsx cho TẤT CẢ roles (HS / PH / GV / Admin).
+ * Thay thế hoàn toàn cho "Hộp thư" section trong 3 dashboards.
  *
- * Layout kiểu Messenger:
- *  - 2-pane (md+): list/recipient-picker bên trái 1/3, thread bên phải 2/3
- *  - Mobile: chỉ show 1 pane tại 1 thời điểm; bấm thread → ẩn list; back button để quay lại
- *  - "Soạn tin nhắn" mở RecipientPicker (search + eligible recipients) trong list pane
- *  - "Gửi thông báo" mở BroadcastComposer (subject + target + body) trong list pane
- *  - Message bubble: avatar bên trái cho incoming (group liên tiếp cùng sender), day-separator
- *
- * Polling: 30s setInterval + visibilitychange pause.
+ * UI:
+ *  - Backdrop mờ click-to-close (mobile + desktop)
+ *  - Panel trượt từ phải: 420px (desktop), 100% (mobile)
+ *  - Header: "Hộp thư" + close button
+ *  - Tab pills: Tin nhắn | Thông báo
+ *  - Compose inline: RecipientPicker (search + danh sách) hoặc BroadcastComposer
+ *  - Thread list (Messenger-style) hoặc Thread view (bubble + day separator + reply)
+ *  - 30s polling khi đang mở (pause khi tab ẩn)
  */
 
 import { useState, useEffect, useCallback, useRef, type FormEvent, type ReactNode } from "react";
+import { motion, AnimatePresence } from "motion/react";
 import {
   Plus,
   Send,
   RefreshCw,
   ArrowLeft,
   Search,
+  X,
   Inbox as InboxIcon,
   Megaphone,
 } from "lucide-react";
@@ -31,7 +34,6 @@ import {
   createBroadcast,
   sendMessage,
   markThreadRead,
-  getUnreadCount,
   MessageThread,
   Message,
   ApiUser,
@@ -44,19 +46,23 @@ type SubTab = "messages" | "announcements";
 type ComposeMode = "closed" | "pick-recipient" | "compose-broadcast";
 
 const POLL_MS = 30_000;
-const GROUP_GAP_MS = 5 * 60 * 1000; // 5 phút — nếu cùng sender mà cách >5 phút → nhóm mới
+const GROUP_GAP_MS = 5 * 60 * 1000;
 
-interface InboxSectionProps {
-  role: "parent" | "teacher" | "admin";
+interface InboxPopupProps {
+  open: boolean;
+  onClose: () => void;
+  user: ApiUser;
   classes?: Array<{ id: string; name: string }>;
   onUnreadChange?: (count: number) => void;
 }
 
-export default function InboxSection({
-  role,
+export default function InboxPopup({
+  open,
+  onClose,
+  user,
   classes = [],
   onUnreadChange,
-}: InboxSectionProps) {
+}: InboxPopupProps) {
   const [subTab, setSubTab] = useState<SubTab>("messages");
   const [threads, setThreads] = useState<MessageThread[]>([]);
   const [loading, setLoading] = useState(true);
@@ -65,21 +71,19 @@ export default function InboxSection({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [composeMode, setComposeMode] = useState<ComposeMode>("closed");
   const [error, setError] = useState<string | null>(null);
-  const [showThreadMobile, setShowThreadMobile] = useState(false);
 
   // Notify parent of unread count for badge
   useEffect(() => {
     onUnreadChange?.(unreadCount);
   }, [unreadCount, onUnreadChange]);
 
-  // ─── Load threads + unread count ──────────────────────────────
+  // ─── Load threads (chỉ khi popup mở) ─────────────────────────
   const load = useCallback(async (showSpinner = true) => {
     if (showSpinner) setLoading(true);
     setError(null);
     try {
-      const [t, u] = await Promise.all([listThreads(), getUnreadCount()]);
+      const t = await listThreads();
       setThreads(t.threads);
-      setUnreadCount(u.count);
     } catch (e: any) {
       console.warn("inbox load failed:", e);
       setError(e?.error || "Không tải được hộp thư.");
@@ -89,7 +93,10 @@ export default function InboxSection({
     }
   }, []);
 
+  // Polling chỉ khi open
   useEffect(() => {
+    if (!open) return;
+    load(true);
     const tick = () => {
       if (document.visibilityState === "visible") load(false);
     };
@@ -102,11 +109,20 @@ export default function InboxSection({
       clearInterval(id);
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [load]);
+  }, [open, load]);
 
+  // Reset state khi popup đóng
   useEffect(() => {
-    load(true);
-  }, [load]);
+    if (!open) {
+      // Delay nhỏ để animation slide-out chạy mượt
+      const t = setTimeout(() => {
+        setSelectedId(null);
+        setComposeMode("closed");
+        setError(null);
+      }, 250);
+      return () => clearTimeout(t);
+    }
+  }, [open]);
 
   const handleRefresh = () => {
     sound.playClick();
@@ -120,36 +136,29 @@ export default function InboxSection({
   const visibleThreads = subTab === "messages" ? directThreads : broadcastThreads;
   const selectedThread = threads.find((t) => t.id === selectedId) || null;
 
-  // Khi đổi sub-tab thì đóng compose + reset selection
   const switchSubTab = (next: SubTab) => {
     sound.playClick();
     setSubTab(next);
     setSelectedId(null);
-    setShowThreadMobile(false);
     setComposeMode("closed");
   };
 
-  // Click thread từ list (handle cả desktop lẫn mobile)
   const handleSelectThread = (id: string) => {
     sound.playClick();
     setSelectedId(id);
     setComposeMode("closed");
-    setShowThreadMobile(true);
   };
 
-  // Quay lại list (mobile only — desktop không cần)
   const handleBackToList = () => {
     sound.playClick();
-    setShowThreadMobile(false);
+    setSelectedId(null);
   };
 
-  // Mở compose mode (khi click "+ Soạn tin nhắn" / "Gửi thông báo")
   const openCompose = () => {
     sound.playClick();
     setError(null);
     setSelectedId(null);
-    setShowThreadMobile(false);
-    if (subTab === "announcements" && (role === "admin" || role === "teacher")) {
+    if (subTab === "announcements" && (user.role === "admin" || user.role === "teacher")) {
       setComposeMode("compose-broadcast");
     } else {
       setComposeMode("pick-recipient");
@@ -161,18 +170,16 @@ export default function InboxSection({
     setComposeMode("closed");
   };
 
-  // Khi gửi tin nhắn direct mới thành công → mở thread vừa tạo
   const handleNewConversation = async (recipientId: string) => {
     try {
       const res = await createDirectThread({
         recipient_id: recipientId,
-        body: "👋", // placeholder first message — picker sẽ cho user gõ body riêng
+        body: "👋",
       });
       sound.playSuccess();
       await load(false);
       setComposeMode("closed");
       setSelectedId(res.thread.id);
-      setShowThreadMobile(true);
     } catch (e: any) {
       setError(e?.error || "Không tạo được cuộc trò chuyện.");
       sound.playIncorrect();
@@ -181,7 +188,7 @@ export default function InboxSection({
 
   const handleNewBroadcast = async (payload: {
     subject: string;
-    target_role: "parent" | "teacher" | "all";
+    target_role: "parent" | "teacher" | "student" | "all";
     target_class_id: string | null;
     body: string;
   }) => {
@@ -191,161 +198,211 @@ export default function InboxSection({
       await load(false);
       setComposeMode("closed");
       setSelectedId(res.thread.id);
-      setShowThreadMobile(true);
     } catch (e: any) {
       setError(e?.error || "Không gửi được thông báo.");
       sound.playIncorrect();
     }
   };
 
-  // ─── Loading state ────────────────────────────────────────────
-  if (loading) {
-    return (
-      <div
-        className="p-12 rounded-3xl border text-center space-y-3"
-        style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border)" }}
-      >
-        <div className="text-3xl floaty">📬</div>
-        <div className="text-sm font-bold" style={{ color: "var(--muted)" }}>
-          Đang tải hộp thư...
-        </div>
-      </div>
-    );
-  }
+  // Recompute unread count khi threads list thay đổi
+  useEffect(() => {
+    const total = threads.reduce((s, t) => s + t.unread_count, 0);
+    setUnreadCount(total);
+  }, [threads]);
 
   return (
-    <div className="space-y-3">
-      {/* Sub-tab nav + Compose + Refresh */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div
-          className="flex gap-1 p-1 rounded-2xl border"
-          style={{ backgroundColor: "var(--bg-soft)", borderColor: "var(--border)" }}
-        >
-          <SubTabButton
-            active={subTab === "messages"}
-            onClick={() => switchSubTab("messages")}
-            icon={<InboxIcon className="w-3.5 h-3.5" />}
-            label="Tin nhắn"
-            badge={directThreads.reduce((s, t) => s + t.unread_count, 0)}
+    <AnimatePresence>
+      {open && (
+        <>
+          {/* Backdrop */}
+          <motion.div
+            key="backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            onClick={onClose}
+            className="fixed inset-0 z-50"
+            style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
           />
-          <SubTabButton
-            active={subTab === "announcements"}
-            onClick={() => switchSubTab("announcements")}
-            icon={<Megaphone className="w-3.5 h-3.5" />}
-            label="Thông báo"
-            badge={broadcastThreads.reduce((s, t) => s + t.unread_count, 0)}
-          />
-        </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing}
-            className="p-2 rounded-xl border"
+          {/* Panel */}
+          <motion.div
+            key="panel"
+            initial={{ x: "100%" }}
+            animate={{ x: 0 }}
+            exit={{ x: "100%" }}
+            transition={{ type: "spring", stiffness: 300, damping: 32 }}
+            className="fixed top-0 right-0 bottom-0 z-50 flex flex-col w-full md:w-[420px] shadow-2xl"
             style={{
-              backgroundColor: "var(--bg-soft)",
-              borderColor: "var(--border)",
-              color: "var(--muted)",
+              backgroundColor: "var(--bg-card)",
+              borderLeft: "1px solid var(--border)",
             }}
-            title="Làm mới"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "spin-once" : ""}`} />
-          </button>
-          {composeMode === "closed" ? (
-            <button
-              onClick={openCompose}
-              className="px-3.5 py-2 rounded-xl text-xs font-extrabold flex items-center gap-1.5"
-              style={{ backgroundColor: "var(--primary)", color: "var(--on-primary)" }}
+            {/* Header */}
+            <div
+              className="px-4 py-3 border-b flex items-center gap-2.5 shrink-0"
+              style={{ borderColor: "var(--border-soft)" }}
             >
-              <Plus className="w-3.5 h-3.5" />
-              {subTab === "messages"
-                ? "Soạn tin nhắn"
-                : role === "admin" || role === "teacher"
-                ? "Gửi thông báo"
-                : "Soạn tin nhắn"}
-            </button>
-          ) : (
-            <button
-              onClick={closeCompose}
-              className="px-3.5 py-2 rounded-xl text-xs font-extrabold border"
-              style={{
-                backgroundColor: "var(--bg-soft)",
-                borderColor: "var(--border)",
-                color: "var(--muted)",
-              }}
-            >
-              Hủy
-            </button>
-          )}
-        </div>
-      </div>
+              {selectedThread || composeMode !== "closed" ? (
+                <button
+                  onClick={selectedThread ? handleBackToList : closeCompose}
+                  className="p-1 -ml-1 rounded-lg"
+                  style={{ color: "var(--muted)" }}
+                  title="Quay lại"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                </button>
+              ) : (
+                <div className="w-7 h-7 rounded-full flex items-center justify-center text-sm shrink-0" style={{ background: "linear-gradient(135deg, var(--primary), var(--accent))" }}>
+                  📬
+                </div>
+              )}
+              <div className="flex-1 min-w-0">
+                <div className="text-base font-extrabold truncate">
+                  {selectedThread
+                    ? selectedThread.type === "broadcast"
+                      ? selectedThread.subject || "Thông báo"
+                      : selectedThread.participants
+                          .filter((p) => p.id !== user.id)
+                          .map((p) => p.name)
+                          .join(", ") || "Hộp thư"
+                    : composeMode === "compose-broadcast"
+                    ? "Thông báo mới"
+                    : composeMode === "pick-recipient"
+                    ? "Tin nhắn mới"
+                    : "Hộp thư"}
+                </div>
+                {unreadCount > 0 && !selectedThread && composeMode === "closed" && (
+                  <div className="text-[10px] font-bold" style={{ color: "var(--primary)" }}>
+                    {unreadCount} chưa đọc
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={onClose}
+                className="p-1.5 rounded-lg"
+                style={{
+                  color: "var(--muted)",
+                  backgroundColor: "var(--bg-soft)",
+                }}
+                title="Đóng (Esc)"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
 
-      {error && (
-        <div
-          className="p-3 rounded-xl border text-xs font-medium"
-          style={{
-            backgroundColor: "var(--danger-soft)",
-            borderColor: "var(--danger)",
-            color: "var(--danger)",
-          }}
-        >
-          {error}
-        </div>
+            {/* Sub-tab nav + Compose (chỉ khi ở list view) */}
+            {!selectedThread && composeMode === "closed" && (
+              <div className="px-3 pt-2.5 pb-2 border-b shrink-0" style={{ borderColor: "var(--border-soft)" }}>
+                <div className="flex items-center justify-between gap-2">
+                  <div
+                    className="flex gap-1 p-1 rounded-2xl border flex-1"
+                    style={{ backgroundColor: "var(--bg-soft)", borderColor: "var(--border)" }}
+                  >
+                    <SubTabButton
+                      active={subTab === "messages"}
+                      onClick={() => switchSubTab("messages")}
+                      icon={<InboxIcon className="w-3.5 h-3.5" />}
+                      label="Tin nhắn"
+                      badge={directThreads.reduce((s, t) => s + t.unread_count, 0)}
+                    />
+                    <SubTabButton
+                      active={subTab === "announcements"}
+                      onClick={() => switchSubTab("announcements")}
+                      icon={<Megaphone className="w-3.5 h-3.5" />}
+                      label="Thông báo"
+                      badge={broadcastThreads.reduce((s, t) => s + t.unread_count, 0)}
+                    />
+                  </div>
+                  <button
+                    onClick={handleRefresh}
+                    disabled={refreshing}
+                    className="p-1.5 rounded-xl border shrink-0"
+                    style={{
+                      backgroundColor: "var(--bg-soft)",
+                      borderColor: "var(--border)",
+                      color: "var(--muted)",
+                    }}
+                    title="Làm mới"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "spin-once" : ""}`} />
+                  </button>
+                </div>
+                <button
+                  onClick={openCompose}
+                  className="w-full mt-2 px-3 py-2 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5"
+                  style={{ backgroundColor: "var(--primary)", color: "var(--on-primary)" }}
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  {subTab === "messages"
+                    ? "Soạn tin nhắn"
+                    : user.role === "admin" || user.role === "teacher"
+                    ? "Gửi thông báo"
+                    : "Soạn tin nhắn"}
+                </button>
+              </div>
+            )}
+
+            {error && (
+              <div
+                className="mx-3 mt-2 p-2.5 rounded-xl border text-xs font-medium shrink-0"
+                style={{
+                  backgroundColor: "var(--danger-soft)",
+                  borderColor: "var(--danger)",
+                  color: "var(--danger)",
+                }}
+              >
+                {error}
+              </div>
+            )}
+
+            {/* Content */}
+            <div className="flex-1 overflow-hidden flex flex-col min-h-0">
+              {composeMode === "pick-recipient" ? (
+                <RecipientPicker
+                  onPick={handleNewConversation}
+                  onBack={closeCompose}
+                />
+              ) : composeMode === "compose-broadcast" ? (
+                <BroadcastComposer
+                  role={user.role}
+                  classes={classes}
+                  onCancel={closeCompose}
+                  onSend={handleNewBroadcast}
+                />
+              ) : selectedThread ? (
+                <ThreadView
+                  key={selectedThread.id}
+                  thread={selectedThread}
+                  me={user}
+                  onAfterSend={() => load(false)}
+                />
+              ) : loading ? (
+                <div
+                  className="flex-1 flex flex-col items-center justify-center gap-2"
+                  style={{ color: "var(--muted)" }}
+                >
+                  <div className="text-3xl floaty">📬</div>
+                  <div className="text-xs font-bold">Đang tải...</div>
+                </div>
+              ) : (
+                <ThreadList
+                  threads={visibleThreads}
+                  selectedId={selectedId}
+                  onSelect={handleSelectThread}
+                  emptyHint={
+                    subTab === "messages"
+                      ? "Chưa có cuộc trò chuyện nào.\nBấm \"+ Soạn tin nhắn\" để bắt đầu."
+                      : "Chưa có thông báo nào — GV/admin sẽ gửi thông báo tới bạn khi có cập nhật."
+                  }
+                />
+              )}
+            </div>
+          </motion.div>
+        </>
       )}
-
-      {/* 2-pane: list/recipient-picker/broadcast-composer (1/3) + thread (2/3) */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 min-h-[480px]">
-        <div
-          className={`md:col-span-1 ${
-            showThreadMobile ? "hidden md:block" : "block"
-          }`}
-        >
-          {composeMode === "pick-recipient" ? (
-            <RecipientPicker
-              role={role}
-              onPick={handleNewConversation}
-              onBack={closeCompose}
-            />
-          ) : composeMode === "compose-broadcast" ? (
-            <BroadcastComposer
-              role={role}
-              classes={classes}
-              onCancel={closeCompose}
-              onSend={handleNewBroadcast}
-            />
-          ) : (
-            <ThreadList
-              threads={visibleThreads}
-              selectedId={selectedId}
-              onSelect={handleSelectThread}
-              emptyHint={
-                subTab === "messages"
-                  ? "Chưa có cuộc trò chuyện nào.\nBấm \"+ Soạn tin nhắn\" để bắt đầu."
-                  : "Chưa có thông báo nào — admin sẽ gửi thông báo tới bạn khi có cập nhật."
-              }
-            />
-          )}
-        </div>
-
-        <div
-          className={`md:col-span-2 ${
-            showThreadMobile ? "block" : "hidden md:block"
-          }`}
-        >
-          {selectedThread ? (
-            <ThreadView
-              key={selectedThread.id}
-              thread={selectedThread}
-              me={getMe()}
-              onBackMobile={handleBackToList}
-              onAfterSend={() => load(false)}
-            />
-          ) : (
-            <EmptyPane subTab={subTab} composeMode={composeMode} role={role} />
-          )}
-        </div>
-      </div>
-    </div>
+    </AnimatePresence>
   );
 }
 
@@ -353,12 +410,7 @@ export default function InboxSection({
 // Helpers
 // ============================================================
 
-function getMe(): ApiUser {
-  return JSON.parse(localStorage.getItem("apex_auth_user") || "{}") as ApiUser;
-}
-
 function avatarGradient(seed: string): string {
-  // Stable gradient theo id/name — pick giữa primary, secondary, accent
   const palettes = [
     "linear-gradient(135deg, var(--primary), var(--accent))",
     "linear-gradient(135deg, var(--secondary), var(--primary))",
@@ -414,7 +466,7 @@ function SubTabButton({
   return (
     <button
       onClick={onClick}
-      className="px-3 py-1.5 rounded-xl text-xs font-extrabold flex items-center gap-1.5"
+      className="flex-1 px-2.5 py-1.5 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5"
       style={{
         backgroundColor: active ? "var(--bg-card)" : "transparent",
         color: active ? "var(--primary)" : "var(--muted)",
@@ -422,7 +474,8 @@ function SubTabButton({
       }}
     >
       {icon}
-      {label}
+      <span className="hidden sm:inline">{label}</span>
+      <span className="sm:hidden">{label.split(" ")[0]}</span>
       {badge > 0 && (
         <span
           className="ml-0.5 px-1.5 py-0.5 text-[9px] font-extrabold rounded-full"
@@ -436,7 +489,7 @@ function SubTabButton({
 }
 
 // ============================================================
-// Thread list (Messenger-style row)
+// Thread list (Messenger-style row, compact for popup)
 // ============================================================
 
 function ThreadList({
@@ -452,23 +505,15 @@ function ThreadList({
 }) {
   if (threads.length === 0) {
     return (
-      <div
-        className="h-full p-8 rounded-2xl border text-center space-y-2 flex flex-col items-center justify-center"
-        style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border)" }}
-      >
+      <div className="flex-1 flex flex-col items-center justify-center gap-2 p-6 text-center" style={{ color: "var(--muted)" }}>
         <div className="text-4xl">📭</div>
-        <p className="text-sm font-extrabold whitespace-pre-line" style={{ color: "var(--muted)" }}>
-          {emptyHint}
-        </p>
+        <p className="text-xs font-bold whitespace-pre-line">{emptyHint}</p>
       </div>
     );
   }
 
   return (
-    <div
-      className="h-full rounded-2xl border overflow-y-auto"
-      style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border)" }}
-    >
+    <div className="flex-1 overflow-y-auto">
       <ul>
         {threads.map((t) => {
           const isActive = t.id === selectedId;
@@ -477,7 +522,10 @@ function ThreadList({
             t.type === "broadcast"
               ? t.subject || "(không có tiêu đề)"
               : t.participants.length > 0
-              ? t.participants.map((p) => p.name).join(" & ")
+              ? t.participants
+                  .filter((p) => p.id !== "") // (placeholder)
+                  .map((p) => p.name)
+                  .join(", ") || t.created_by_name
               : t.created_by_name;
           const preview = t.last_message?.body ?? "—";
           const time = formatMessageTime(t.last_message_at || t.created_at);
@@ -496,7 +544,7 @@ function ThreadList({
               >
                 {t.type === "broadcast" ? (
                   <div
-                    className="w-11 h-11 rounded-full flex items-center justify-center text-lg shrink-0 text-white"
+                    className="w-10 h-10 rounded-full flex items-center justify-center text-base shrink-0 text-white"
                     style={{
                       background:
                         "linear-gradient(135deg, var(--accent), var(--secondary))",
@@ -505,7 +553,7 @@ function ThreadList({
                     📢
                   </div>
                 ) : (
-                  <Avatar name={titleText} id={t.id} size={44} />
+                  <Avatar name={titleText} id={t.id} size={40} />
                 )}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-2">
@@ -525,23 +573,23 @@ function ThreadList({
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 mt-0.5">
-                    {t.type === "broadcast" && t.target_class_name && (
-                      <span
-                        className="text-[9px] px-1.5 py-0.5 rounded-md font-extrabold shrink-0"
-                        style={{
-                          backgroundColor: "var(--bg-soft)",
-                          color: "var(--accent)",
-                        }}
-                      >
-                        🏫 {t.target_class_name}
-                      </span>
-                    )}
                     <div
                       className={`text-[11px] truncate flex-1 ${
                         isUnread ? "font-bold" : ""
                       }`}
                       style={{ color: isUnread ? "var(--foreground)" : "var(--muted)" }}
                     >
+                      {t.type === "broadcast" && t.target_class_name && (
+                        <span
+                          className="text-[9px] px-1.5 py-0.5 rounded-md font-extrabold mr-1.5"
+                          style={{
+                            backgroundColor: "var(--bg-soft)",
+                            color: "var(--accent)",
+                          }}
+                        >
+                          🏫 {t.target_class_name}
+                        </span>
+                      )}
                       {preview}
                     </div>
                     {isUnread && (
@@ -564,15 +612,13 @@ function ThreadList({
 }
 
 // ============================================================
-// Recipient picker (Messenger-style "new conversation")
+// Recipient picker
 // ============================================================
 
 function RecipientPicker({
-  role,
   onPick,
   onBack,
 }: {
-  role: "parent" | "teacher" | "admin";
   onPick: (id: string) => void;
   onBack: () => void;
 }) {
@@ -605,27 +651,9 @@ function RecipientPicker({
   });
 
   return (
-    <div
-      className="h-full rounded-2xl border flex flex-col overflow-hidden"
-      style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border)" }}
-    >
-      {/* Header */}
-      <div
-        className="px-3 py-2.5 border-b flex items-center gap-2"
-        style={{ borderColor: "var(--border-soft)" }}
-      >
-        <button
-          onClick={onBack}
-          className="p-1 rounded-lg md:hidden"
-          style={{ color: "var(--muted)" }}
-        >
-          <ArrowLeft className="w-4 h-4" />
-        </button>
-        <span className="text-sm font-extrabold">Tin nhắn mới</span>
-      </div>
-
-      {/* Search input */}
-      <div className="p-2.5 border-b" style={{ borderColor: "var(--border-soft)" }}>
+    <div className="flex-1 flex flex-col overflow-hidden">
+      {/* Search */}
+      <div className="p-2.5 border-b shrink-0" style={{ borderColor: "var(--border-soft)" }}>
         <div
           className="flex items-center gap-2 px-3 py-2 rounded-xl border"
           style={{ backgroundColor: "var(--bg-soft)", borderColor: "var(--border-soft)" }}
@@ -642,7 +670,7 @@ function RecipientPicker({
         </div>
       </div>
 
-      {/* Recipients list */}
+      {/* List */}
       <div className="flex-1 overflow-y-auto">
         {loading ? (
           <div className="p-6 text-center text-xs" style={{ color: "var(--muted)" }}>
@@ -690,7 +718,7 @@ function RecipientPicker({
 }
 
 // ============================================================
-// Broadcast composer (inline trong list pane, admin/teacher only)
+// Broadcast composer
 // ============================================================
 
 function BroadcastComposer({
@@ -699,18 +727,18 @@ function BroadcastComposer({
   onCancel,
   onSend,
 }: {
-  role: "parent" | "teacher" | "admin";
+  role: "student" | "parent" | "teacher" | "admin";
   classes: Array<{ id: string; name: string }>;
   onCancel: () => void;
   onSend: (payload: {
     subject: string;
-    target_role: "parent" | "teacher" | "all";
+    target_role: "parent" | "teacher" | "student" | "all";
     target_class_id: string | null;
     body: string;
   }) => Promise<void> | void;
 }) {
   const [subject, setSubject] = useState("");
-  const [targetRole, setTargetRole] = useState<"parent" | "teacher" | "all">("parent");
+  const [targetRole, setTargetRole] = useState<"parent" | "teacher" | "student" | "all">("parent");
   const [targetClassId, setTargetClassId] = useState("");
   const [body, setBody] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -737,25 +765,7 @@ function BroadcastComposer({
   };
 
   return (
-    <div
-      className="h-full rounded-2xl border flex flex-col overflow-hidden"
-      style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border)" }}
-    >
-      {/* Header */}
-      <div
-        className="px-3 py-2.5 border-b flex items-center gap-2"
-        style={{ borderColor: "var(--border-soft)" }}
-      >
-        <button
-          onClick={onCancel}
-          className="p-1 rounded-lg md:hidden"
-          style={{ color: "var(--muted)" }}
-        >
-          <ArrowLeft className="w-4 h-4" />
-        </button>
-        <span className="text-sm font-extrabold">📢 Thông báo mới</span>
-      </div>
-
+    <div className="flex-1 flex flex-col overflow-hidden">
       <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-3 space-y-2.5">
         <div>
           <label className="text-[10px] font-extrabold uppercase tracking-wider block mb-1" style={{ color: "var(--muted)" }}>
@@ -764,7 +774,7 @@ function BroadcastComposer({
           <input
             value={subject}
             onChange={(e) => setSubject(e.target.value)}
-            placeholder="Ví dụ: Lịch nghỉ Tết Nguyên Đán"
+            placeholder="Ví dụ: Lịch nghỉ Tết"
             className="w-full px-3 py-2 rounded-xl border text-sm outline-none"
             style={{
               backgroundColor: "var(--bg-soft)",
@@ -783,7 +793,7 @@ function BroadcastComposer({
             <select
               value={targetRole}
               onChange={(e) =>
-                setTargetRole(e.target.value as "parent" | "teacher" | "all")
+                setTargetRole(e.target.value as "parent" | "teacher" | "student" | "all")
               }
               className="w-full px-2.5 py-2 rounded-xl border text-sm outline-none"
               style={{
@@ -793,9 +803,12 @@ function BroadcastComposer({
               }}
               disabled={submitting}
             >
+              {role === "admin" && <option value="student">🎓 Học sinh</option>}
               <option value="parent">👨‍👩‍👧 Phụ huynh</option>
               {role === "admin" && <option value="teacher">👩‍🏫 Giáo viên</option>}
-              <option value="all">👥 Tất cả</option>
+              {role === "admin" && <option value="all">👥 Tất cả</option>}
+              {role === "teacher" && <option value="student">🎓 Học sinh lớp tôi</option>}
+              {role === "teacher" && <option value="all">👨‍👩‍👧 PH + HS lớp tôi</option>}
             </select>
           </div>
           <div>
@@ -829,13 +842,13 @@ function BroadcastComposer({
           <textarea
             value={body}
             onChange={(e) => setBody(e.target.value)}
-            placeholder="Nhập nội dung thông báo gửi tới phụ huynh..."
+            placeholder="Nhập nội dung thông báo..."
             className="w-full px-3 py-2 rounded-xl border text-sm outline-none resize-none"
             style={{
               backgroundColor: "var(--bg-soft)",
               borderColor: "var(--border)",
               color: "var(--foreground)",
-              minHeight: 120,
+              minHeight: 100,
             }}
             disabled={submitting}
           />
@@ -856,7 +869,7 @@ function BroadcastComposer({
       </form>
 
       <div
-        className="p-3 border-t flex gap-2"
+        className="p-3 border-t flex gap-2 shrink-0"
         style={{ borderColor: "var(--border-soft)" }}
       >
         <button
@@ -886,20 +899,17 @@ function BroadcastComposer({
 }
 
 // ============================================================
-// Thread view (messages + day separators + reply box)
+// Thread view
 // ============================================================
 
 function ThreadView({
   thread,
   me,
-  onBackMobile,
   onAfterSend,
 }: {
   thread: MessageThread;
   me: ApiUser;
-  onBackMobile: () => void;
   onAfterSend: () => void;
-  // Allow `key` from React (see Debugging tips in MEMORY.md)
   key?: string | number;
 }) {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -927,19 +937,16 @@ function ThreadView({
     loadThread();
   }, [loadThread]);
 
-  // Auto-scroll xuống cuối khi load / có tin mới
   useEffect(() => {
     if (!loading && scrollerRef.current) {
       scrollerRef.current.scrollTop = scrollerRef.current.scrollHeight;
     }
   }, [loading, messages.length]);
 
-  // Re-mark read
   useEffect(() => {
     if (!loading) markThreadRead(thread.id).catch(() => {});
   }, [thread.id, loading]);
 
-  // Auto-grow textarea
   useEffect(() => {
     const ta = textareaRef.current;
     if (!ta) return;
@@ -967,95 +974,20 @@ function ThreadView({
 
   if (loading) {
     return (
-      <div
-        className="h-full p-12 rounded-2xl border text-center flex items-center justify-center"
-        style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border)" }}
-      >
-        <div className="text-2xl floaty">⏳</div>
-      </div>
-    );
-  }
-  if (error) {
-    return (
-      <div
-        className="h-full p-6 rounded-2xl border text-center space-y-2 flex flex-col items-center justify-center"
-        style={{
-          backgroundColor: "var(--danger-soft)",
-          borderColor: "var(--danger)",
-        }}
-      >
-        <p className="text-xs font-bold" style={{ color: "var(--danger)" }}>
-          {error}
-        </p>
-        <button
-          onClick={loadThread}
-          className="px-3 py-1.5 rounded-xl text-xs font-extrabold"
-          style={{ backgroundColor: "var(--primary)", color: "var(--on-primary)" }}
-        >
-          Thử lại
-        </button>
-      </div>
+      <div className="flex-1 flex items-center justify-center text-2xl floaty">⏳</div>
     );
   }
 
   const isBroadcast = thread.type === "broadcast";
   const canReply = !isBroadcast || me.role === "admin" || thread.created_by === me.id;
-  const titleText = isBroadcast
-    ? thread.subject || "(không có tiêu đề)"
-    : thread.participants.length > 0
-    ? thread.participants.map((p) => p.name).join(" & ")
-    : thread.created_by_name;
-
-  // Build message groups: [{ kind: "day" | "msg", ... }]
   const renderedItems = groupMessagesForRender(messages);
 
   return (
-    <div
-      className="h-full rounded-2xl border flex flex-col overflow-hidden"
-      style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border)" }}
-    >
-      {/* Header */}
-      <div
-        className="px-3 py-2.5 border-b flex items-center gap-2.5 shrink-0"
-        style={{ borderColor: "var(--border-soft)" }}
-      >
-        <button
-          onClick={onBackMobile}
-          className="p-1 -ml-1 rounded-lg md:hidden"
-          style={{ color: "var(--muted)" }}
-          title="Quay lại"
-        >
-          <ArrowLeft className="w-4 h-4" />
-        </button>
-        {isBroadcast ? (
-          <div
-            className="w-10 h-10 rounded-full flex items-center justify-center text-base shrink-0 text-white"
-            style={{
-              background: "linear-gradient(135deg, var(--accent), var(--secondary))",
-            }}
-          >
-            📢
-          </div>
-        ) : (
-          <Avatar name={titleText} id={thread.id} size={40} />
-        )}
-        <div className="flex-1 min-w-0">
-          <div className="text-sm font-extrabold truncate">{titleText}</div>
-          <div className="text-[10px]" style={{ color: "var(--muted)" }}>
-            {isBroadcast
-              ? `${ROLE_LABEL[me.role] || "Bạn"} · Thông báo`
-              : thread.participants
-                  .map((p) => `${ROLE_EMOJI[p.role]} ${p.name}`)
-                  .join(" · ")}
-          </div>
-        </div>
-      </div>
-
-      {/* Messages */}
+    <div className="flex-1 flex flex-col overflow-hidden min-h-0">
       <div
         ref={scrollerRef}
         className="flex-1 overflow-y-auto px-3 py-3 space-y-2"
-        style={{ minHeight: 240, backgroundColor: "var(--bg-soft)" }}
+        style={{ backgroundColor: "var(--bg-soft)" }}
       >
         {messages.length === 0 ? (
           <div className="text-center text-xs py-8" style={{ color: "var(--muted)" }}>
@@ -1068,23 +1000,31 @@ function ThreadView({
             }
             const m = item.msg;
             const isMine = m.sender_id === me.id;
-            const showAvatar = item.showAvatar;
-            const showName = item.showName;
             return (
               <MessageBubble
                 key={m.id}
                 msg={m}
                 isMine={isMine}
-                showAvatar={showAvatar}
-                showName={showName}
-                meName={me.name}
+                showAvatar={item.showAvatar}
+                showName={item.showName}
               />
             );
           })
         )}
+        {error && (
+          <div
+            className="p-2.5 rounded-xl border text-xs font-medium"
+            style={{
+              backgroundColor: "var(--danger-soft)",
+              borderColor: "var(--danger)",
+              color: "var(--danger)",
+            }}
+          >
+            {error}
+          </div>
+        )}
       </div>
 
-      {/* Reply box */}
       {canReply ? (
         <div
           className="p-2.5 border-t flex items-end gap-2 shrink-0"
@@ -1094,7 +1034,7 @@ function ThreadView({
             ref={textareaRef}
             value={replyBody}
             onChange={(e) => setReplyBody(e.target.value)}
-            placeholder={isBroadcast ? "Soạn thông báo tiếp theo..." : "Aa"}
+            placeholder={isBroadcast ? "Soạn thông báo..." : "Aa"}
             className="flex-1 px-3 py-2 rounded-2xl border text-sm outline-none resize-none"
             style={{
               backgroundColor: "var(--bg-soft)",
@@ -1127,7 +1067,7 @@ function ThreadView({
           className="p-3 border-t text-[10px] text-center shrink-0"
           style={{ color: "var(--muted)", borderColor: "var(--border-soft)" }}
         >
-          Bạn chỉ có thể xem thông báo này. Để liên hệ người gửi, bấm "Soạn tin nhắn" ở trên.
+          Bạn chỉ có thể xem thông báo này. Để liên hệ người gửi, bấm "Soạn tin nhắn".
         </div>
       )}
     </div>
@@ -1135,7 +1075,7 @@ function ThreadView({
 }
 
 // ============================================================
-// Message bubble (avatar on left cho incoming, group consecutive)
+// Message bubble
 // ============================================================
 
 function MessageBubble({
@@ -1148,7 +1088,6 @@ function MessageBubble({
   isMine: boolean;
   showAvatar: boolean;
   showName: boolean;
-  meName: string;
   key?: string | number;
 }) {
   if (isMine) {
@@ -1241,7 +1180,7 @@ function DaySeparator({ label }: { label: string; key?: string | number }) {
 }
 
 // ============================================================
-// Group messages: chèn day-separator + xác định showAvatar/showName
+// Group messages
 // ============================================================
 
 type RenderItem =
@@ -1260,7 +1199,6 @@ function groupMessagesForRender(messages: Message[]): RenderItem[] {
     if (dk !== lastDayKey) {
       out.push({ kind: "day", label: formatDaySeparator(m.created_at) });
       lastDayKey = dk;
-      // Reset grouping khi sang ngày mới
       lastSender = null;
       lastTs = null;
     }
@@ -1279,59 +1217,4 @@ function groupMessagesForRender(messages: Message[]): RenderItem[] {
     lastTs = ts;
   }
   return out;
-}
-
-// ============================================================
-// Empty pane
-// ============================================================
-
-function EmptyPane({
-  subTab,
-  composeMode,
-  role,
-}: {
-  subTab: SubTab;
-  composeMode: ComposeMode;
-  role: "parent" | "teacher" | "admin";
-}) {
-  const isComposing = composeMode !== "closed";
-  if (isComposing) {
-    return (
-      <div
-        className="h-full p-8 rounded-2xl border text-center space-y-2 flex flex-col items-center justify-center"
-        style={{
-          backgroundColor: "var(--bg-soft)",
-          borderColor: "var(--border-soft)",
-          borderStyle: "dashed",
-        }}
-      >
-        <div className="text-3xl">{composeMode === "compose-broadcast" ? "📢" : "💬"}</div>
-        <p className="text-sm font-extrabold" style={{ color: "var(--muted)" }}>
-          {composeMode === "compose-broadcast"
-            ? "Soạn thông báo bên trái rồi bấm Gửi."
-            : role === "parent"
-            ? "Chọn giáo viên hoặc admin để bắt đầu."
-            : "Chọn người nhận để bắt đầu."}
-        </p>
-      </div>
-    );
-  }
-  return (
-    <div
-      className="h-full p-8 rounded-2xl border text-center space-y-2 flex flex-col items-center justify-center"
-      style={{
-        backgroundColor: "var(--bg-soft)",
-        borderColor: "var(--border-soft)",
-        borderStyle: "dashed",
-      }}
-    >
-      <div className="text-4xl">{subTab === "messages" ? "💬" : "📢"}</div>
-      <p className="text-base font-extrabold">
-        {subTab === "messages" ? "Chọn cuộc trò chuyện" : "Chọn thông báo"}
-      </p>
-      <p className="text-xs" style={{ color: "var(--muted)" }}>
-        Bấm vào 1 thread ở danh sách bên trái để xem nội dung.
-      </p>
-    </div>
-  );
 }
