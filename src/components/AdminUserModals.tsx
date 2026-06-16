@@ -481,48 +481,27 @@ function RelationshipsSection({ user }: { user: AdminUser }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user.id]);
 
-  // Initial load: fetch immediately so list is ready when user opens picker
+  // Fetch candidates when picker opens OR search changes
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const u = await adminListUsers({
-          role: oppositeRole,
-          parentless: isParent,
-        });
-        if (!cancelled) setCandidates(u.users ?? []);
-      } catch (e) {
-        console.warn("Initial load failed:", e);
-        if (!cancelled) setCandidates([]);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user.id, oppositeRole, isParent]);
-
-  // Search: debounced refetch (only when user types)
-  useEffect(() => {
-    if (!search) return; // initial-load effect handles empty case
     let cancelled = false;
     const t = setTimeout(async () => {
       try {
         const u = await adminListUsers({
           role: oppositeRole,
-          search,
+          search: search || undefined,
           parentless: isParent,
         });
         if (!cancelled) setCandidates(u.users ?? []);
       } catch (e) {
-        console.warn("Search failed:", e);
+        console.warn("Picker fetch failed:", e);
+        if (!cancelled) setCandidates([]);
       }
-    }, 250);
+    }, search ? 250 : 0); // immediate on open, debounced on search
     return () => {
       cancelled = true;
       clearTimeout(t);
     };
-  }, [search, oppositeRole, isParent]);
+  }, [pickerOpen, search, oppositeRole, isParent]);
 
   const handleAdd = async (
     candidateId: string,
@@ -636,9 +615,6 @@ function RelationshipsSection({ user }: { user: AdminUser }) {
               ))
             )}
           </div>
-          <p className="text-[9px]" style={{ color: "var(--muted)" }}>
-            debug: candidates={candidates.length}, linked={linked.length}, available={availableCandidates.length}
-          </p>
         </div>
       )}
 
