@@ -341,11 +341,6 @@ export default function App() {
     { id: "ailab", label: "Chat AI", icon: Bot, emoji: "💬" },
   ];
 
-  // Step 5: teacher dùng TeacherDashboard; Step 6: admin dùng AdminDashboard riêng
-  const isAdmin = user.role === "admin";
-  const isTeacher = user.role === "teacher";
-  const isTeacherOrAdmin = isAdmin || isTeacher;
-
   // ============================================================
   // RENDER GATES
   // ============================================================
@@ -380,6 +375,12 @@ export default function App() {
   if (!user || !profile) {
     return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
   }
+
+  // Step 5: teacher dùng TeacherDashboard; Step 6: admin dùng AdminDashboard riêng
+  // (Sau gate ở trên — `user` đã chắc chắn non-null)
+  const isAdmin = user.role === "admin";
+  const isTeacher = user.role === "teacher";
+  const isTeacherOrAdmin = isAdmin || isTeacher;
 
   // 3. Đã đăng nhập → app chính
   return (
