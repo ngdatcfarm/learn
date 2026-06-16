@@ -603,3 +603,97 @@ export async function adminListCronRuns(limit = 50): Promise<{ runs: CronRun[] }
 export async function adminListAudio(limit = 50): Promise<{ recordings: AudioRecording[] }> {
   return request("GET", `/api/admin/audio?limit=${limit}`);
 }
+
+// ============================================================
+// Messaging endpoints (Step 7) — PH ↔ GV/Admin + broadcast
+// ============================================================
+
+export interface MessageThread {
+  id: string;
+  type: "direct" | "broadcast";
+  subject: string | null;
+  target_class_id: string | null;
+  target_class_name: string | null;
+  created_by: string;
+  created_by_name: string;
+  created_at: string;
+  last_message_at: string | null;
+  last_message: {
+    body: string;
+    sender_id: string;
+    sender_name: string;
+    created_at: string;
+  } | null;
+  unread_count: number;
+  participants: Array<{
+    id: string;
+    name: string;
+    role: "student" | "parent" | "teacher" | "admin";
+  }>;
+}
+
+export interface Message {
+  id: string;
+  thread_id: string;
+  sender_id: string;
+  sender_name: string;
+  sender_role: "student" | "parent" | "teacher" | "admin";
+  body: string;
+  created_at: string;
+}
+
+export interface CreateDirectThreadPayload {
+  recipient_id: string;
+  body: string;
+}
+
+export interface CreateBroadcastPayload {
+  type: "broadcast";
+  subject: string;
+  target_role: "parent" | "teacher" | "all";
+  target_class_id?: string | null;
+  body: string;
+}
+
+export async function listThreads(): Promise<{ threads: MessageThread[] }> {
+  return request("GET", "/api/messages/threads");
+}
+
+export async function listEligibleRecipients(): Promise<{ recipients: ApiUser[] }> {
+  return request("GET", "/api/messages/eligible-recipients");
+}
+
+export async function getThread(
+  id: string
+): Promise<{ thread: MessageThread; messages: Message[]; participants: ApiUser[] }> {
+  return request("GET", `/api/messages/threads/${id}`);
+}
+
+export async function createDirectThread(
+  payload: CreateDirectThreadPayload
+): Promise<{ thread: MessageThread; message: Message }> {
+  return request("POST", "/api/messages/threads", payload);
+}
+
+export async function createBroadcast(
+  payload: CreateBroadcastPayload
+): Promise<{ thread: MessageThread; message: Message }> {
+  return request("POST", "/api/messages/threads", payload);
+}
+
+export async function sendMessage(
+  threadId: string,
+  body: string
+): Promise<{ message: Message }> {
+  return request("POST", `/api/messages/threads/${threadId}/messages`, { body });
+}
+
+export async function markThreadRead(
+  threadId: string
+): Promise<{ ok: boolean; last_read_at: string }> {
+  return request("POST", `/api/messages/threads/${threadId}/read`);
+}
+
+export async function getUnreadCount(): Promise<{ count: number }> {
+  return request("GET", "/api/messages/unread-count");
+}

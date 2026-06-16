@@ -34,3 +34,30 @@ export function skillProgressPct(skill: SkillId, val: number, attempts: number):
   if (skill === "learn") return Math.min(100, val / 2);
   return Math.min(100, val);
 }
+
+/**
+ * Format thời gian cho chat message / thread list.
+ *  - Hôm nay:  HH:MM
+ *  - Hôm qua: "Hôm qua"
+ *  - Tuần này: "T2".."CN"
+ *  - Cũ hơn:  "YYYY-MM-DD"
+ *
+ * MySQL DATETIME trả về "YYYY-MM-DD HH:MM:SS" → convert sang ISO trước.
+ */
+export function formatMessageTime(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const date = new Date(iso.includes("T") ? iso : iso.replace(" ", "T") + "Z");
+  const now = new Date();
+  const sameDay = date.toDateString() === now.toDateString();
+  if (sameDay) {
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (date.toDateString() === yesterday.toDateString()) return "Hôm qua";
+  const diffDays = Math.floor((now.getTime() - date.getTime()) / 86400000);
+  if (diffDays < 7) {
+    return ["CN", "T2", "T3", "T4", "T5", "T6", "T7"][date.getDay()];
+  }
+  return iso.slice(0, 10);
+}
