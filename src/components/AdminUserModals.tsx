@@ -636,6 +636,9 @@ function RelationshipsSection({ user }: { user: AdminUser }) {
               ))
             )}
           </div>
+          <p className="text-[9px]" style={{ color: "var(--muted)" }}>
+            debug: candidates={candidates.length}, linked={linked.length}, available={availableCandidates.length}
+          </p>
         </div>
       )}
 
