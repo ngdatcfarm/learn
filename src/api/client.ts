@@ -441,10 +441,23 @@ export async function adminListUsers(opts: {
 export async function adminGetUser(id: string): Promise<{
   user: AdminUser;
   classes: any[];
-  children: any[];
-  parents: any[];
+  children: LinkedUser[];
+  parents: LinkedUser[];
 }> {
   return request("GET", `/api/admin/users/${id}`);
+}
+
+/**
+ * LinkedUser — dùng cho danh sách PH ↔ HS trong EditUserModal (tab "Quan hệ")
+ * và bất kỳ call nào tới adminGetUser. Khớp SELECT children/parents ở server/admin.ts.
+ */
+export interface LinkedUser {
+  id: string;
+  name: string;
+  username: string;
+  level: string | null;
+  cefr_level: string | null;
+  relationship: string | null;
 }
 
 export async function adminCreateUser(
@@ -529,6 +542,21 @@ export async function adminRemoveClassMember(
   studentId: string
 ): Promise<{ ok: true }> {
   return request("DELETE", `/api/admin/classes/${classId}/members/${studentId}`);
+}
+
+export async function adminAddParentLink(payload: {
+  parent_id: string;
+  student_id: string;
+  relationship?: string | null;
+}): Promise<{ ok: true }> {
+  return request("POST", "/api/admin/parent-links", payload);
+}
+
+export async function adminRemoveParentLink(
+  parentId: string,
+  studentId: string
+): Promise<{ ok: true }> {
+  return request("DELETE", `/api/admin/parent-links/${parentId}/${studentId}`);
 }
 
 export async function adminGetZaloSettings(): Promise<{ settings: ZaloSettings }> {

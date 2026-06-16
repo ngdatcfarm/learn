@@ -25,6 +25,8 @@
  *   GET    /api/admin/audit
  *   GET    /api/admin/cron-runs
  *   GET    /api/admin/audio
+ *   POST   /api/admin/parent-links
+ *   DELETE /api/admin/parent-links/:parentId/:studentId
  */
 
 import { Router, Request, Response } from "express";
@@ -183,7 +185,7 @@ adminRouter.get("/users/:id", async (req: Request, res: Response) => {
   let parents: RowDataPacket[] = [];
   if (user.role === "parent") {
     children = (await query<RowDataPacket[]>(
-      `SELECT u.id, u.name, u.username, u.level, u.cefr_level
+      `SELECT u.id, u.name, u.username, u.level, u.cefr_level, pl.relationship
        FROM parent_links pl JOIN users u ON u.id = pl.student_id
        WHERE pl.parent_id = ? AND u.deleted_at IS NULL`,
       [id]
@@ -199,6 +201,97 @@ adminRouter.get("/users/:id", async (req: Request, res: Response) => {
 
   res.json({ user, classes, children, parents });
 });
+
+// ============================================================
+// PARENT_LINKS — Admin quản lý quan hệ PH ↔ HS
+// ============================================================
+
+adminRouter.post("/parent-links", async (req: Request, res: Response) => {
+  const admin = await requireRole(req, res, ["admin"]);
+  if (!admin) return;
+
+  const { parent_id, student_id, relationship } = req.body || {};
+  if (!parent_id || !student_id) {
+    return res.status(400).json({ error: "Thiếu parent_id hoặc student_id." });
+  }
+
+  // Validate parent
+  const parent = await queryOne<RowDataPacket & { name: string }>(
+    "SELECT id, name FROM users WHERE id = ? AND role='parent' AND deleted_at IS NULL",
+    [parent_id]
+  );
+  if (!parent) {
+    return res
+      .status(400)
+      .json({ error: "parent_id không hợp lệ (không phải PH hoặc đã xóa)." });
+  }
+
+  // Validate student
+  const student = await queryOne<RowDataPacket & { name: string }>(
+    "SELECT id, name FROM users WHERE id = ? AND role='student' AND deleted_at IS NULL",
+    [student_id]
+  );
+  if (!student) {
+    return res
+      .status(400)
+      .json({ error: "student_id không hợp lệ (không phải HS hoặc đã xóa)." });
+  }
+
+  // Relationship (optional, max 16 chars theo schema)
+  const relValue =
+    relationship == null || relationship === ""
+      ? null
+      : String(relationship).trim();
+  if (relValue && relValue.length > 16) {
+    return res.status(400).json({ error: "relationship tối đa 16 ký tự." });
+  }
+
+  // Duplicate check
+  const existing = await queryOne(
+    "SELECT 1 FROM parent_links WHERE parent_id = ? AND student_id = ?",
+    [parent_id, student_id]
+  );
+  if (existing) {
+    return res.status(409).json({ error: "Liên kết PH ↔ HS đã tồn tại." });
+  }
+
+  await query<ResultSetHeader>(
+    "INSERT INTO parent_links (parent_id, student_id, relationship) VALUES (?, ?, ?)",
+    [parent_id, student_id, relValue]
+  );
+  await logAudit({
+    actorId: admin.id,
+    action: "parent_link.add",
+    targetType: "parent_link",
+    targetId: `${parent_id}/${student_id}`,
+    details: { parent_name: parent.name, student_name: student.name, relationship: relValue },
+    ip: req.ip,
+  });
+
+  res.json({ ok: true });
+});
+
+adminRouter.delete(
+  "/parent-links/:parentId/:studentId",
+  async (req: Request, res: Response) => {
+    const admin = await requireRole(req, res, ["admin"]);
+    if (!admin) return;
+    const { parentId, studentId } = req.params;
+    await query<ResultSetHeader>(
+      "DELETE FROM parent_links WHERE parent_id = ? AND student_id = ?",
+      [parentId, studentId]
+    );
+    await logAudit({
+      actorId: admin.id,
+      action: "parent_link.remove",
+      targetType: "parent_link",
+      targetId: `${parentId}/${studentId}`,
+      details: {},
+      ip: req.ip,
+    });
+    res.json({ ok: true });
+  }
+);
 
 const VALID_ROLES = ["student", "parent", "teacher", "admin"] as const;
 

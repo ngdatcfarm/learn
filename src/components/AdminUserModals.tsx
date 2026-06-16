@@ -8,10 +8,14 @@ import {
   PatchUserPayload,
   AdminClass,
   ZaloSettings,
+  LinkedUser,
   adminListUsers,
   adminGetClassMembers,
   adminAddClassMember,
   adminRemoveClassMember,
+  adminGetUser,
+  adminAddParentLink,
+  adminRemoveParentLink,
   adminTestZalo,
 } from "../api/client";
 import { Field, inputStyle, inputClass } from "./ui/Field";
@@ -267,6 +271,7 @@ export function EditUserModal({
   onClose: () => void;
   onSubmit: (p: PatchUserPayload) => Promise<void>;
 }) {
+  const [tab, setTab] = useState<"info" | "relationships">("info");
   const [name, setName] = useState(user.name);
   const [level, setLevel] = useState(user.level || "Beginner");
   const [cefrLevel, setCefrLevel] = useState(user.cefr_level || "A1");
@@ -276,6 +281,8 @@ export function EditUserModal({
   );
   const [submitting, setSubmitting] = useState(false);
   const isStudent = user.role === "student";
+  const isParent = user.role === "parent";
+  const showRelationshipsTab = isStudent || isParent;
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -298,7 +305,7 @@ export function EditUserModal({
     <ModalShell
       title={`Sửa: ${user.name}`}
       onClose={onClose}
-      maxWidth="max-w-lg"
+      maxWidth={tab === "relationships" ? "max-w-2xl" : "max-w-lg"}
       footer={
         <>
           <button
@@ -309,94 +316,395 @@ export function EditUserModal({
           >
             Hủy
           </button>
-          <button
-            type="submit"
-            form="edit-user-form"
-            disabled={submitting}
-            className="flex-1 py-2.5 rounded-xl text-sm font-extrabold disabled:opacity-50"
-            style={{ backgroundColor: "var(--primary)", color: "var(--on-primary)" }}
-          >
-            {submitting ? "Đang lưu..." : "Lưu"}
-          </button>
+          {tab === "info" && (
+            <button
+              type="submit"
+              form="edit-user-form"
+              disabled={submitting}
+              className="flex-1 py-2.5 rounded-xl text-sm font-extrabold disabled:opacity-50"
+              style={{ backgroundColor: "var(--primary)", color: "var(--on-primary)" }}
+            >
+              {submitting ? "Đang lưu..." : "Lưu"}
+            </button>
+          )}
         </>
       }
     >
-      <form id="edit-user-form" onSubmit={handleSubmit} className="space-y-3.5">
-        <Field label="Họ và tên">
+      {showRelationshipsTab && (
+        <div
+          className="flex gap-1 p-1 rounded-2xl"
+          style={{ backgroundColor: "var(--bg-soft)" }}
+        >
+          {(
+            [
+              { id: "info" as const, label: "Thông tin" },
+              { id: "relationships" as const, label: "Quan hệ" },
+            ]
+          ).map((t) => {
+            const active = tab === t.id;
+            return (
+              <button
+                key={t.id}
+                onClick={() => {
+                  sound.playClick();
+                  setTab(t.id);
+                }}
+                className="flex-1 px-3 py-1.5 rounded-xl text-xs font-extrabold transition-colors"
+                style={{
+                  backgroundColor: active ? "var(--bg-card)" : "transparent",
+                  color: active ? "var(--primary)" : "var(--muted)",
+                  boxShadow: active ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+                }}
+              >
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {tab === "info" ? (
+        <form id="edit-user-form" onSubmit={handleSubmit} className="space-y-3.5">
+          <Field label="Họ và tên">
+            <input
+              required
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className={inputClass()}
+              style={inputStyle}
+              autoFocus
+            />
+          </Field>
+          {isStudent && (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Level">
+                  <select
+                    value={level}
+                    onChange={(e) => setLevel(e.target.value)}
+                    className={inputClass()}
+                    style={inputStyle}
+                  >
+                    <option>Beginner</option>
+                    <option>Intermediate</option>
+                    <option>Advanced</option>
+                  </select>
+                </Field>
+                <Field label="CEFR">
+                  <select
+                    value={cefrLevel}
+                    onChange={(e) => setCefrLevel(e.target.value)}
+                    className={inputClass()}
+                    style={inputStyle}
+                  >
+                    <option>A1</option>
+                    <option>A2</option>
+                    <option>B1</option>
+                    <option>B2</option>
+                    <option>C1</option>
+                    <option>C2</option>
+                  </select>
+                </Field>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Mục tiêu">
+                  <select
+                    value={goal}
+                    onChange={(e) => setGoal(e.target.value)}
+                    className={inputClass()}
+                    style={inputStyle}
+                  >
+                    <option>IELTS</option>
+                    <option>Giao tiếp</option>
+                    <option>Học thuật</option>
+                    <option>Tổng quát</option>
+                  </select>
+                </Field>
+                <Field label="Phút/ngày">
+                  <select
+                    value={String(dailyGoal)}
+                    onChange={(e) => setDailyGoal(Number(e.target.value) as DailyGoalMinutes)}
+                    className={inputClass()}
+                    style={inputStyle}
+                  >
+                    {DAILY_GOAL_OPTIONS.map((n) => (
+                      <option key={n} value={n}>{n}</option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+            </>
+          )}
+          <p className="text-[11px]" style={{ color: "var(--muted)" }}>
+            💡 Để đổi mật khẩu, dùng nút "Reset mật khẩu" ở danh sách.
+          </p>
+        </form>
+      ) : (
+        <RelationshipsSection user={user} />
+      )}
+    </ModalShell>
+  );
+}
+
+// ============================================================
+// RelationshipsSection — sub-component cho tab "Quan hệ"
+// Dùng cho cả student (list parents) và parent (list children).
+// ============================================================
+
+function RelationshipsSection({ user }: { user: AdminUser }) {
+  const isStudent = user.role === "student";
+  const oppositeRole = isStudent ? "parent" : "student";
+  const oppositeLabel = isStudent ? "phụ huynh" : "học sinh";
+
+  const [linked, setLinked] = useState<LinkedUser[]>([]);
+  const [loadingLinks, setLoadingLinks] = useState(true);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const [candidates, setCandidates] = useState<AdminUser[]>([]);
+
+  // Load current links
+  const refetch = async () => {
+    setLoadingLinks(true);
+    try {
+      const res = await adminGetUser(user.id);
+      setLinked(isStudent ? res.parents : res.children);
+    } catch (e) {
+      console.warn("Load links failed:", e);
+    } finally {
+      setLoadingLinks(false);
+    }
+  };
+
+  useEffect(() => {
+    refetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user.id]);
+
+  // Search opposite-role users (debounced)
+  useEffect(() => {
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        const u = await adminListUsers({ role: oppositeRole, search: search || undefined });
+        if (!cancelled) setCandidates(u.users);
+      } catch (e) {
+        console.warn("Search failed:", e);
+      }
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [search, oppositeRole]);
+
+  const handleAdd = async (
+    candidateId: string,
+    relationship: string
+  ): Promise<void> => {
+    try {
+      const payload: { parent_id: string; student_id: string; relationship?: string } = isStudent
+        ? { parent_id: candidateId, student_id: user.id }
+        : { parent_id: user.id, student_id: candidateId };
+      if (relationship.trim()) payload.relationship = relationship.trim();
+      await adminAddParentLink(payload);
+      sound.playSuccess();
+      setPickerOpen(false);
+      setSearch("");
+      await refetch();
+    } catch (e: unknown) {
+      const msg =
+        e && typeof e === "object" && "error" in e
+          ? String((e as { error?: unknown }).error)
+          : null;
+      alert(msg || "Lỗi khi thêm liên kết.");
+    }
+  };
+
+  const handleRemove = async (linkedUser: LinkedUser): Promise<void> => {
+    if (
+      !window.confirm(
+        `Bỏ liên kết với "${linkedUser.name}"?`
+      )
+    )
+      return;
+    try {
+      // DELETE /api/admin/parent-links/:parentId/:studentId
+      // isStudent: user là studentId, linkedUser là parentId → swap
+      // isParent:  user là parentId, linkedUser là studentId → như cũ
+      const parentId = isStudent ? linkedUser.id : user.id;
+      const studentId = isStudent ? user.id : linkedUser.id;
+      await adminRemoveParentLink(parentId, studentId);
+      sound.playClick();
+      setLinked((prev) => prev.filter((m) => m.id !== linkedUser.id));
+    } catch (e: unknown) {
+      const msg =
+        e && typeof e === "object" && "error" in e
+          ? String((e as { error?: unknown }).error)
+          : null;
+      alert(msg || "Lỗi khi bỏ liên kết.");
+    }
+  };
+
+  const linkedIds = new Set(linked.map((l) => l.id));
+  const availableCandidates = candidates.filter((c) => !linkedIds.has(c.id));
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <span
+          className="text-xs font-extrabold uppercase tracking-wider"
+          style={{ color: "var(--muted-strong)" }}
+        >
+          {linked.length} liên kết
+        </span>
+        <button
+          onClick={() => setPickerOpen((v) => !v)}
+          className="text-xs font-extrabold px-3 py-1.5 rounded-xl"
+          style={{ backgroundColor: "var(--primary)", color: "var(--on-primary)" }}
+        >
+          {pickerOpen ? "Đóng" : `+ Thêm ${oppositeLabel}`}
+        </button>
+      </div>
+
+      {pickerOpen && (
+        <div
+          className="p-3 rounded-2xl border space-y-2"
+          style={{ backgroundColor: "var(--bg-soft)", borderColor: "var(--border)" }}
+        >
           <input
-            required
-            value={name}
-            onChange={(e) => setName(e.target.value)}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={`Tìm ${oppositeLabel} theo tên hoặc username...`}
             className={inputClass()}
             style={inputStyle}
             autoFocus
           />
-        </Field>
-        {isStudent && (
-          <>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Level">
-                <select
-                  value={level}
-                  onChange={(e) => setLevel(e.target.value)}
-                  className={inputClass()}
-                  style={inputStyle}
+          <div className="max-h-56 overflow-y-auto space-y-1">
+            {availableCandidates.length === 0 ? (
+              <p
+                className="text-xs text-center py-2"
+                style={{ color: "var(--muted)" }}
+              >
+                {search ? "Không tìm thấy." : `Tất cả ${oppositeLabel} đã được liên kết.`}
+              </p>
+            ) : (
+              availableCandidates.slice(0, 20).map((c) => (
+                <PickerCandidate
+                  key={c.id}
+                  candidate={c}
+                  onAdd={handleAdd}
+                />
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {loadingLinks ? (
+        <div className="text-center py-4" style={{ color: "var(--muted)" }}>
+          Đang tải...
+        </div>
+      ) : (
+        <div className="space-y-1.5 max-h-72 overflow-y-auto">
+          {linked.length === 0 ? (
+            <p
+              className="text-xs text-center py-3"
+              style={{ color: "var(--muted)" }}
+            >
+              {isStudent
+                ? "HS này chưa được liên kết với PH nào."
+                : "PH này chưa được liên kết với HS nào."}
+            </p>
+          ) : (
+            linked.map((l) => (
+              <div
+                key={l.id}
+                className="flex items-center justify-between px-3 py-2 rounded-xl border gap-2"
+                style={{
+                  backgroundColor: "var(--bg-elevated)",
+                  borderColor: "var(--border-soft)",
+                }}
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-extrabold truncate">{l.name}</div>
+                  <div
+                    className="text-[10px] truncate"
+                    style={{ color: "var(--muted)" }}
+                  >
+                    @{l.username}
+                    {isStudent && l.level ? ` · ${l.level}` : ""}
+                    {!isStudent && l.cefr_level ? ` · ${l.cefr_level}` : ""}
+                  </div>
+                </div>
+                {l.relationship && (
+                  <span
+                    className="text-[10px] font-extrabold px-2 py-0.5 rounded-lg shrink-0"
+                    style={{
+                      backgroundColor: "var(--primary-soft)",
+                      color: "var(--primary)",
+                    }}
+                  >
+                    {l.relationship}
+                  </span>
+                )}
+                <button
+                  onClick={() => handleRemove(l)}
+                  className="text-[10px] font-extrabold px-2 py-1 rounded-lg shrink-0"
+                  style={{ color: "var(--danger)" }}
                 >
-                  <option>Beginner</option>
-                  <option>Intermediate</option>
-                  <option>Advanced</option>
-                </select>
-              </Field>
-              <Field label="CEFR">
-                <select
-                  value={cefrLevel}
-                  onChange={(e) => setCefrLevel(e.target.value)}
-                  className={inputClass()}
-                  style={inputStyle}
-                >
-                  <option>A1</option>
-                  <option>A2</option>
-                  <option>B1</option>
-                  <option>B2</option>
-                  <option>C1</option>
-                  <option>C2</option>
-                </select>
-              </Field>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Mục tiêu">
-                <select
-                  value={goal}
-                  onChange={(e) => setGoal(e.target.value)}
-                  className={inputClass()}
-                  style={inputStyle}
-                >
-                  <option>IELTS</option>
-                  <option>Giao tiếp</option>
-                  <option>Học thuật</option>
-                  <option>Tổng quát</option>
-                </select>
-              </Field>
-              <Field label="Phút/ngày">
-                <select
-                  value={String(dailyGoal)}
-                  onChange={(e) => setDailyGoal(Number(e.target.value) as DailyGoalMinutes)}
-                  className={inputClass()}
-                  style={inputStyle}
-                >
-                  {DAILY_GOAL_OPTIONS.map((n) => (
-                    <option key={n} value={n}>{n}</option>
-                  ))}
-                </select>
-              </Field>
-            </div>
-          </>
-        )}
-        <p className="text-[11px]" style={{ color: "var(--muted)" }}>
-          💡 Để đổi mật khẩu, dùng nút "Reset mật khẩu" ở danh sách.
-        </p>
-      </form>
-    </ModalShell>
+                  Bỏ
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// PickerCandidate — 1 row trong picker search (input relationship + Thêm)
+// Tách riêng để có local state cho relationship input.
+// ============================================================
+
+function PickerCandidate({
+  candidate,
+  onAdd,
+}: {
+  candidate: AdminUser;
+  onAdd: (id: string, relationship: string) => Promise<void>;
+  key?: string | number;
+}) {
+  const [relationship, setRelationship] = useState("");
+  return (
+    <div
+      className="px-3 py-2 rounded-xl flex items-center gap-2"
+      style={{ backgroundColor: "var(--bg-elevated)" }}
+    >
+      <div className="min-w-0 flex-1">
+        <div className="text-xs font-extrabold truncate">{candidate.name}</div>
+        <div className="text-[10px] truncate" style={{ color: "var(--muted)" }}>
+          @{candidate.username}
+          {candidate.cefr_level ? ` · ${candidate.cefr_level}` : ""}
+        </div>
+      </div>
+      <input
+        value={relationship}
+        onChange={(e) => setRelationship(e.target.value)}
+        placeholder="Quan hệ"
+        maxLength={16}
+        className={inputClass("w-20 px-2 py-1 text-[10px]")}
+        style={inputStyle}
+      />
+      <button
+        onClick={() => onAdd(candidate.id, relationship)}
+        className="text-[10px] font-extrabold px-2 py-1 rounded-lg shrink-0"
+        style={{ color: "var(--primary)" }}
+      >
+        + Thêm
+      </button>
+    </div>
   );
 }
 
