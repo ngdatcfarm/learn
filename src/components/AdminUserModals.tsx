@@ -490,9 +490,10 @@ function RelationshipsSection({ user }: { user: AdminUser }) {
           role: oppositeRole,
           parentless: isParent,
         });
-        if (!cancelled) setCandidates(u.users);
+        if (!cancelled) setCandidates(u.users ?? []);
       } catch (e) {
         console.warn("Initial load failed:", e);
+        if (!cancelled) setCandidates([]);
       }
     })();
     return () => {
@@ -512,7 +513,7 @@ function RelationshipsSection({ user }: { user: AdminUser }) {
           search,
           parentless: isParent,
         });
-        if (!cancelled) setCandidates(u.users);
+        if (!cancelled) setCandidates(u.users ?? []);
       } catch (e) {
         console.warn("Search failed:", e);
       }
@@ -600,7 +601,13 @@ function RelationshipsSection({ user }: { user: AdminUser }) {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder={`Tìm ${oppositeLabel} theo tên hoặc username...`}
+            placeholder={
+              isParent
+                ? candidates.length > 0
+                  ? `Tìm trong ${candidates.length} học sinh chưa có phụ huynh...`
+                  : "Tìm học sinh chưa có phụ huynh..."
+                : `Tìm ${oppositeLabel} theo tên hoặc username...`
+            }
             className={inputClass()}
             style={inputStyle}
             autoFocus
@@ -608,16 +615,16 @@ function RelationshipsSection({ user }: { user: AdminUser }) {
           <div className="max-h-56 overflow-y-auto space-y-1">
             {availableCandidates.length === 0 ? (
               <p
-                className="text-xs text-center py-2"
-                style={{ color: "var(--muted)" }}
+                className="text-xs text-center py-3 font-bold"
+                style={{ color: "var(--muted-strong)" }}
               >
                 {search
-                  ? "Không tìm thấy."
+                  ? `Không tìm thấy "${search}".`
                   : candidates.length === 0
-                    ? "Đang tải..."
+                    ? "Đang tải danh sách..."
                     : isParent
-                      ? "Tất cả học sinh đã có phụ huynh."
-                      : `Tất cả ${oppositeLabel} đã được liên kết.`}
+                      ? "Không có học sinh nào chưa có phụ huynh. Tất cả học sinh đã được liên kết với PH khác, hoặc bạn có thể tạo HS mới."
+                      : `Tất cả ${oppositeLabel} đã được liên kết với HS/PH này.`}
               </p>
             ) : (
               availableCandidates.slice(0, 20).map((c) => (

@@ -267,8 +267,8 @@ adminRouter.post("/parent-links", async (req: Request, res: Response) => {
     actorId: admin.id,
     action: "parent_link.add",
     targetType: "parent_link",
-    targetId: `${parent_id}/${student_id}`,
-    details: { parent_name: parent.name, student_name: student.name, relationship: relValue },
+    targetId: student_id,
+    details: { parent_id, parent_name: parent.name, student_name: student.name, relationship: relValue },
     ip: req.ip,
   });
 
@@ -289,8 +289,8 @@ adminRouter.delete(
       actorId: admin.id,
       action: "parent_link.remove",
       targetType: "parent_link",
-      targetId: `${parentId}/${studentId}`,
-      details: {},
+      targetId: studentId,
+      details: { parent_id: parentId },
       ip: req.ip,
     });
     res.json({ ok: true });
