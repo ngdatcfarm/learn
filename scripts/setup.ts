@@ -33,6 +33,7 @@ import crypto from "node:crypto";
 import "dotenv/config";
 import { getPool, queryOne, closePool, RowDataPacket } from "../db/client";
 import { migrate } from "../db/migrate";
+import { hashPassword } from "../server/passwords";
 
 // ============================================================
 // CONFIG
@@ -220,12 +221,6 @@ async function applyMigrations(): Promise<void> {
 // STEP 6: Seed admin (nếu chưa có)
 // ============================================================
 
-function hashPassword(password: string): { hash: string; salt: string } {
-  const salt = crypto.randomBytes(16).toString("hex");
-  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
-  return { hash, salt };
-}
-
 async function seedAdminIfNeeded(): Promise<void> {
   step(6, "Kiểm tra admin account");
 
@@ -272,6 +267,11 @@ async function verifySchema(): Promise<void> {
     "previews",
     "assignments",
     "schema_migrations",
+    // Step 6 (v2)
+    "speak_recordings",
+    "parent_report_settings",
+    "audit_log",
+    "cron_job_runs",
   ];
 
   const [rows] = (await getPool().query(

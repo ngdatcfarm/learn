@@ -125,6 +125,41 @@ export async function queryOne<T = unknown>(
 }
 
 // ============================================================
+// Helper: transaction wrapper
+// ============================================================
+
+/**
+ * Chạy 1 callback trong transaction. Auto-rollback nếu callback throw.
+ * Callback nhận 1 connection để thực thi SQL trên cùng session.
+ *
+ * Ví dụ:
+ *   await withTransaction(async (conn) => {
+ *     await conn.execute("UPDATE ...", []);
+ *     await conn.execute("INSERT ...", []);
+ *   });
+ */
+export async function withTransaction<T>(
+  fn: (conn: mysql.PoolConnection) => Promise<T>
+): Promise<T> {
+  const conn = await getPool().getConnection();
+  try {
+    await conn.beginTransaction();
+    const result = await fn(conn);
+    await conn.commit();
+    return result;
+  } catch (err) {
+    try {
+      await conn.rollback();
+    } catch {
+      // ignore secondary rollback errors
+    }
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
+// ============================================================
 // Re-export types tiện dụng
 // ============================================================
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, type ReactNode } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion } from "motion/react";
 import {
   RefreshCw,
@@ -21,6 +21,7 @@ import {
   StudentWithStats,
 } from "../api/client";
 import sound from "../utils/sound";
+import KpiCard from "./ui/KpiCard";
 
 // ============================================================
 // Helpers
@@ -76,53 +77,6 @@ function getDeltaDisplay(
     color: d > 0 ? "var(--success)" : "var(--danger)",
     abs: Math.abs(d),
   };
-}
-
-// ============================================================
-// Sub-component: KPI card
-// ============================================================
-
-function KpiCard({
-  icon,
-  label,
-  value,
-  suffix,
-  color,
-  highlight,
-}: {
-  icon: ReactNode;
-  label: string;
-  value: number;
-  suffix?: string;
-  color: string;
-  highlight?: boolean;
-}) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="p-3.5 rounded-2xl border space-y-1.5 shadow-sm"
-      style={{
-        backgroundColor: "var(--bg-card)",
-        borderColor: highlight ? color : "var(--border)",
-      }}
-    >
-      <div className="flex items-center gap-1.5" style={{ color }}>
-        {icon}
-        <span className="text-[10px] font-extrabold uppercase tracking-wider">
-          {label}
-        </span>
-      </div>
-      <div className="text-2xl font-extrabold leading-none" style={{ color }}>
-        {value}
-        {suffix && (
-          <span className="text-sm font-bold ml-0.5" style={{ color: "var(--muted)" }}>
-            {suffix}
-          </span>
-        )}
-      </div>
-    </motion.div>
-  );
 }
 
 // ============================================================

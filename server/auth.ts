@@ -18,6 +18,7 @@
 import { Router, Request, Response } from "express";
 import crypto from "node:crypto";
 import { query, queryOne, RowDataPacket, ResultSetHeader } from "../db/client";
+import { hashWithSalt } from "./passwords";
 
 const TOKEN_TTL_DAYS = 30;
 const TOKEN_TTL_MS = TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000;
@@ -34,7 +35,7 @@ export interface AuthUser {
 }
 
 function hashPassword(password: string, saltHex: string): string {
-  return crypto.scryptSync(password, saltHex, 64).toString("hex");
+  return hashWithSalt(password, saltHex);
 }
 
 function verifyPassword(password: string, salt: string, expectedHash: string): boolean {
@@ -91,7 +92,7 @@ authRouter.post("/login", async (req: Request, res: Response) => {
   const row = await queryOne<UserRow>(
     `SELECT id, username, name, role, password_hash, password_salt,
             level, cefr_level, goal, daily_goal_minutes
-     FROM users WHERE username = ?`,
+     FROM users WHERE username = ? AND deleted_at IS NULL`,
     [username]
   );
 
@@ -176,7 +177,7 @@ export async function requireUser(
             u.level, u.cefr_level, u.goal, u.daily_goal_minutes
      FROM auth_sessions s
      JOIN users u ON u.id = s.user_id
-     WHERE s.token = ?`,
+     WHERE s.token = ? AND u.deleted_at IS NULL`,
     [token]
   );
 

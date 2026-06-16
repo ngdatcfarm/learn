@@ -38,6 +38,7 @@ import AILabTab from "./components/AILabTab";
 import ProfileModal from "./components/ProfileModal";
 import LoginScreen from "./components/LoginScreen";
 import TeacherDashboard from "./components/TeacherDashboard";
+import AdminDashboard from "./components/AdminDashboard";
 
 type Theme = "light" | "dark";
 
@@ -340,8 +341,10 @@ export default function App() {
     { id: "ailab", label: "Chat AI", icon: Bot, emoji: "💬" },
   ];
 
-  // Step 5: teacher/admin dùng TeacherDashboard thay vì 3-tab HS UI
-  const isTeacherLike = user.role === "teacher" || user.role === "admin";
+  // Step 5: teacher dùng TeacherDashboard; Step 6: admin dùng AdminDashboard riêng
+  const isAdmin = user.role === "admin";
+  const isTeacher = user.role === "teacher";
+  const isTeacherOrAdmin = isAdmin || isTeacher;
 
   // ============================================================
   // RENDER GATES
@@ -467,7 +470,9 @@ export default function App() {
 
         {/* MAIN */}
         <main className="flex-grow w-full max-w-5xl mx-auto px-4 py-6 md:py-8 flex flex-col justify-start">
-          {isTeacherLike ? (
+          {isAdmin ? (
+            <AdminDashboard />
+          ) : isTeacher ? (
             <TeacherDashboard />
           ) : (
             <AnimatePresence mode="wait">
@@ -509,7 +514,7 @@ export default function App() {
         </main>
 
         {/* MOBILE BOTTOM NAV — chỉ HS mới có */}
-        {!isTeacherLike && (
+        {!isTeacherOrAdmin && (
           <nav
             className="fixed bottom-0 inset-x-0 z-40 px-3 py-2.5 border-t backdrop-blur-lg md:hidden"
             style={{
@@ -543,7 +548,7 @@ export default function App() {
         )}
 
         {/* DESKTOP FLOATING SIDE NAV — chỉ HS mới có */}
-        {!isTeacherLike && (
+        {!isTeacherOrAdmin && (
           <div
             className="hidden md:flex fixed left-5 top-1/2 -translate-y-1/2 flex-col gap-2 p-2 rounded-2xl border backdrop-blur-md z-40 shadow-lg"
             style={{

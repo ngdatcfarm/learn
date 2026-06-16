@@ -27,6 +27,7 @@ import { getPool, closePool, RowDataPacket } from "./client";
 
 const SCHEMA_DIR = path.join(process.cwd(), "db");
 const SCHEMA_FILE = path.join(SCHEMA_DIR, "schema.sql");
+const MIGRATIONS_DIR = path.join(SCHEMA_DIR, "migrations");
 
 interface Migration {
   version: number;
@@ -136,6 +137,32 @@ const MIGRATIONS: Migration[] = [
       // Dùng connection riêng để áp dụng toàn bộ statements
       // Nếu 1 cái fail → rollback, không apply nửa vời
       const conn = await pool.getConnection();
+      try {
+        await conn.beginTransaction();
+        for (const stmt of statements) {
+          await conn.query(stmt);
+        }
+        await conn.commit();
+      } catch (err) {
+        await conn.rollback();
+        throw err;
+      } finally {
+        conn.release();
+      }
+    },
+  },
+  {
+    version: 2,
+    name: "admin_and_audio",
+    apply: async () => {
+      // Step 6: thêm 4 bảng + soft-delete column.
+      // Refactor sang directory-loader ở Step 7+ khi có ≥2 non-initial migrations.
+      const sql = fs.readFileSync(
+        path.join(MIGRATIONS_DIR, "002_admin_and_audio.sql"),
+        "utf-8"
+      );
+      const statements = splitSqlStatements(sql);
+      const conn = await getPool().getConnection();
       try {
         await conn.beginTransaction();
         for (const stmt of statements) {

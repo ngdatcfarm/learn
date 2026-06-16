@@ -19,12 +19,7 @@
 
 import crypto from "node:crypto";
 import { getPool, queryOne, query, closePool, RowDataPacket } from "./client";
-
-function hashPassword(password: string): { hash: string; salt: string } {
-  const salt = crypto.randomBytes(16).toString("hex");
-  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
-  return { hash, salt };
-}
+import { hashPassword } from "../server/passwords";
 
 interface UserExtras {
   level?: string;
