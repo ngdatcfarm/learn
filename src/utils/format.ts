@@ -61,3 +61,32 @@ export function formatMessageTime(iso: string | null | undefined): string {
   }
   return iso.slice(0, 10);
 }
+
+/**
+ * Format label cho day-separator trong chat (Hôm nay / Hôm qua / T2..CN / YYYY-MM-DD).
+ * Dùng kèm formatMessageTime để có nhóm ngày + thời gian.
+ */
+export function formatDaySeparator(iso: string): string {
+  const date = new Date(iso.includes("T") ? iso : iso.replace(" ", "T") + "Z");
+  const now = new Date();
+  if (date.toDateString() === now.toDateString()) return "Hôm nay";
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (date.toDateString() === yesterday.toDateString()) return "Hôm qua";
+  const diffDays = Math.floor((now.getTime() - date.getTime()) / 86400000);
+  if (diffDays < 7) {
+    return ["CN", "T2", "T3", "T4", "T5", "T6", "T7"][date.getDay()];
+  }
+  return date.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+/**
+ * Lấy key ngày (YYYY-MM-DD) cho 1 ISO string — dùng để group messages theo ngày.
+ */
+export function dateKey(iso: string): string {
+  const date = new Date(iso.includes("T") ? iso : iso.replace(" ", "T") + "Z");
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
