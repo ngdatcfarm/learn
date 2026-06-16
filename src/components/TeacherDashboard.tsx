@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { motion } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
 import {
   RefreshCw,
   Users,
@@ -23,12 +23,67 @@ import {
 import sound from "../utils/sound";
 import { formatSkillValue } from "../utils/format";
 import KpiCard from "./ui/KpiCard";
+import InboxSection from "./InboxSection";
 
 // ============================================================
 // Helpers
 // ============================================================
 
 const SKILL_ORDER: SkillId[] = ["read", "write", "listen", "speak", "learn"];
+
+type Section = "class" | "inbox";
+
+const SECTIONS: { id: Section; label: string; emoji: string }[] = [
+  { id: "class", label: "Lớp của tôi", emoji: "🏫" },
+  { id: "inbox", label: "Hộp thư", emoji: "📬" },
+];
+
+function SectionNav({
+  active,
+  onChange,
+  unreadCount = 0,
+}: {
+  active: Section;
+  onChange: (s: Section) => void;
+  unreadCount?: number;
+}) {
+  return (
+    <div
+      className="flex gap-1.5 p-1 rounded-2xl border overflow-x-auto"
+      style={{ backgroundColor: "var(--bg-soft)", borderColor: "var(--border)" }}
+    >
+      {SECTIONS.map((s) => {
+        const isActive = s.id === active;
+        return (
+          <button
+            key={s.id}
+            onClick={() => {
+              sound.playClick();
+              onChange(s.id);
+            }}
+            className="flex-1 min-w-fit px-3 py-1.5 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1 transition-colors"
+            style={{
+              backgroundColor: isActive ? "var(--bg-card)" : "transparent",
+              color: isActive ? "var(--primary)" : "var(--muted)",
+              boxShadow: isActive ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+            }}
+          >
+            <span className="text-sm leading-none">{s.emoji}</span>
+            <span className="hidden sm:inline">{s.label}</span>
+            {s.id === "inbox" && unreadCount > 0 && (
+              <span
+                className="ml-1 px-1.5 py-0.5 text-[9px] font-extrabold rounded-full"
+                style={{ backgroundColor: "var(--danger)", color: "white" }}
+              >
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 /**
  * Lấy primary metric value từ 1 skill state.
@@ -77,6 +132,9 @@ export default function TeacherDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [section, setSection] = useState<Section>("class");
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [allClasses, setAllClasses] = useState<Array<{ id: string; name: string }>>([]);
 
   const load = useCallback(async (showSpinner = true) => {
     if (showSpinner) setLoading(true);
@@ -84,6 +142,7 @@ export default function TeacherDashboard() {
     try {
       const res = await getTeacherDashboard();
       setData(res);
+      setAllClasses([{ id: res.class.id, name: res.class.name }]);
     } catch (e: any) {
       const msg = e?.error || "Không tải được dashboard.";
       setError(msg);
@@ -157,6 +216,70 @@ export default function TeacherDashboard() {
 
   return (
     <div className="w-full max-w-5xl mx-auto px-4 py-6 space-y-5">
+      {/* Section nav (Step 7 — pill nav 2 tab: lớp + hộp thư) */}
+      <SectionNav active={section} onChange={setSection} unreadCount={unreadCount} />
+
+      <AnimatePresence mode="wait">
+        {section === "class" && (
+          <motion.div
+            key="class"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.15 }}
+            className="space-y-5"
+          >
+            <ClassSection
+              cls={cls}
+              students={students}
+              classStats={classStats}
+              helpStudents={helpStudents}
+              refreshing={refreshing}
+              onRefresh={handleRefresh}
+            />
+          </motion.div>
+        )}
+        {section === "inbox" && (
+          <motion.div
+            key="inbox"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.15 }}
+          >
+            <InboxSection
+              role="teacher"
+              classes={allClasses}
+              onUnreadChange={setUnreadCount}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// ============================================================
+// Class section (extracted — Step 7 refactor để thêm pill nav)
+// ============================================================
+
+function ClassSection({
+  cls,
+  students,
+  classStats,
+  helpStudents,
+  refreshing,
+  onRefresh,
+}: {
+  cls: TeacherDashboardResponse["class"];
+  students: StudentWithStats[];
+  classStats: TeacherDashboardResponse["classStats"];
+  helpStudents: StudentWithStats[];
+  refreshing: boolean;
+  onRefresh: () => void;
+}) {
+  return (
+    <div className="space-y-5">
       {/* HEADER CARD — gradient banner */}
       <motion.div
         initial={{ opacity: 0, y: 8 }}
@@ -215,7 +338,7 @@ export default function TeacherDashboard() {
           </div>
         </div>
         <button
-          onClick={handleRefresh}
+          onClick={onRefresh}
           disabled={refreshing}
           className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-extrabold border transition-colors"
           style={{
@@ -286,8 +409,6 @@ export default function TeacherDashboard() {
             {SKILL_ORDER.map((sid) => {
               const meta = SKILL_META[sid];
               const v = classStats.avgSkills[sid] ?? 0;
-              // Tính pct theo thang hiển thị (read/listen 0-100, write 0-10, speak 0-wpm, learn 0-từ)
-              // Để đơn giản: write/speak/learn dùng max "trưởng thành" tạm
               let pct = 0;
               if (sid === "write") pct = Math.min(100, v * 10);
               else if (sid === "speak") pct = Math.min(100, v);
@@ -475,7 +596,6 @@ export default function TeacherDashboard() {
                         backgroundColor: s.needsHelp ? "var(--danger-soft)" : "transparent",
                       }}
                     >
-                      {/* Sticky name cell */}
                       <td
                         className="px-3 py-2.5 sticky left-0 z-10"
                         style={{
@@ -576,7 +696,6 @@ export default function TeacherDashboard() {
         )}
       </motion.div>
 
-      {/* Footer hint */}
       <p
         className="text-[11px] text-center pt-1"
         style={{ color: "var(--muted)" }}

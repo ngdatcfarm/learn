@@ -54,8 +54,9 @@ import {
   ManageMembersModal,
   TestZaloModal,
 } from "./AdminUserModals";
+import InboxSection from "./InboxSection";
 
-type Section = "overview" | "users" | "classes" | "zalo" | "audio";
+type Section = "overview" | "users" | "classes" | "zalo" | "audio" | "inbox";
 
 // ============================================================
 // Section pill nav
@@ -65,6 +66,7 @@ const SECTIONS: { id: Section; label: string; emoji: string }[] = [
   { id: "overview", label: "Tổng quan", emoji: "📊" },
   { id: "users", label: "Người dùng", emoji: "👥" },
   { id: "classes", label: "Lớp", emoji: "🏫" },
+  { id: "inbox", label: "Hộp thư", emoji: "📬" },
   { id: "zalo", label: "Zalo", emoji: "💬" },
   { id: "audio", label: "Audio", emoji: "🎙️" },
 ];
@@ -72,9 +74,11 @@ const SECTIONS: { id: Section; label: string; emoji: string }[] = [
 function SectionNav({
   active,
   onChange,
+  unreadCount = 0,
 }: {
   active: Section;
   onChange: (s: Section) => void;
+  unreadCount?: number;
 }) {
   return (
     <div
@@ -99,6 +103,14 @@ function SectionNav({
           >
             <span className="text-sm leading-none">{s.emoji}</span>
             <span className="hidden sm:inline">{s.label}</span>
+            {s.id === "inbox" && unreadCount > 0 && (
+              <span
+                className="ml-1 px-1.5 py-0.5 text-[9px] font-extrabold rounded-full"
+                style={{ backgroundColor: "var(--danger)", color: "white" }}
+              >
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </span>
+            )}
           </button>
         );
       })}
@@ -115,6 +127,8 @@ export default function AdminDashboard() {
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [loadingOverview, setLoadingOverview] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [allClasses, setAllClasses] = useState<Array<{ id: string; name: string }>>([]);
 
   const loadOverview = useCallback(async (showSpinner = true) => {
     if (showSpinner) setLoadingOverview(true);
@@ -132,6 +146,15 @@ export default function AdminDashboard() {
   useEffect(() => {
     loadOverview(true);
   }, [loadOverview]);
+
+  // Step 7: load class list (cho broadcast compose class select)
+  useEffect(() => {
+    adminListClasses()
+      .then((res) =>
+        setAllClasses(res.classes.map((c) => ({ id: c.id, name: c.name })))
+      )
+      .catch((e) => console.warn("adminListClasses failed:", e));
+  }, []);
 
   const handleRefresh = () => {
     sound.playClick();
@@ -215,7 +238,7 @@ export default function AdminDashboard() {
       </motion.div>
 
       {/* Section nav */}
-      <SectionNav active={section} onChange={setSection} />
+      <SectionNav active={section} onChange={setSection} unreadCount={unreadCount} />
 
       {/* Section content */}
       <AnimatePresence mode="wait">
@@ -250,6 +273,21 @@ export default function AdminDashboard() {
             transition={{ duration: 0.15 }}
           >
             <ClassesSection onRefresh={loadOverview} />
+          </motion.div>
+        )}
+        {section === "inbox" && (
+          <motion.div
+            key="inbox"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.15 }}
+          >
+            <InboxSection
+              role="admin"
+              classes={allClasses}
+              onUnreadChange={setUnreadCount}
+            />
           </motion.div>
         )}
         {section === "zalo" && (
