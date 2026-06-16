@@ -202,6 +202,32 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 4,
+    name: "messaging",
+    apply: async () => {
+      // Step 7: inbox nội bộ (PH ↔ GV/Admin + broadcast).
+      // 4 bảng: message_threads + thread_participants + thread_reads + messages.
+      const sql = fs.readFileSync(
+        path.join(MIGRATIONS_DIR, "004_messaging.sql"),
+        "utf-8"
+      );
+      const statements = splitSqlStatements(sql);
+      const conn = await getPool().getConnection();
+      try {
+        await conn.beginTransaction();
+        for (const stmt of statements) {
+          await conn.query(stmt);
+        }
+        await conn.commit();
+      } catch (err) {
+        await conn.rollback();
+        throw err;
+      } finally {
+        conn.release();
+      }
+    },
+  },
 ];
 
 async function ensureMigrationsTable(): Promise<void> {
