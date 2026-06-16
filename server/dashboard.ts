@@ -292,13 +292,29 @@ interface ChildRow extends RowDataPacket {
   relationship: string | null;
 }
 
+interface ParentRow extends RowDataPacket {
+  id: string;
+  name: string;
+  username: string;
+  phone: string | null;
+}
+
 /**
  * GET /api/dashboard/parent
- * Parent: xem danh sách con + skills summary
+ * Parent: xem danh sách con + skills + engagement + today + needs-help.
+ * Step 4 mở rộng: thêm `today` (task/minutes/measurements) + `needsHelp`/`helpReasons`
+ * để PH UI render tab-per-child với KPI + cảnh báo.
+ * Cũng trả `parent.phone` để PH UI biết đã cấu hình Zalo chưa.
  */
 dashboardRouter.get("/parent", async (req: Request, res: Response) => {
   const parent = await requireRole(req, res, ["parent", "admin"]);
   if (!parent) return;
+
+  // Step 4: trả thêm phone để PH UI biết đã cấu hình SĐT chưa
+  const parentRow = await queryOne<ParentRow>(
+    "SELECT id, name, username, phone FROM users WHERE id = ?",
+    [parent.id]
+  );
 
   const children = (await query<ChildRow[]>(
     `SELECT u.id, u.name, u.username, u.level, u.cefr_level, u.goal,
@@ -310,15 +326,36 @@ dashboardRouter.get("/parent", async (req: Request, res: Response) => {
     [parent.id]
   )) as ChildRow[];
 
+  // Reuse teacher handler's parallel pattern: skills + engagement + today (Step 4)
   const childrenWithStats = await Promise.all(
     children.map(async (c) => {
-      const [skills, engagement] = await Promise.all([
+      const [skills, engagement, today] = await Promise.all([
         computeCurrentSkills(c.id),
         computeEngagement(c.id),
+        getTodayActivity(c.id),
       ]);
-      return { ...c, skills, engagement };
+      const help = classifyNeedsHelp(engagement);
+      return {
+        ...c,
+        skills,
+        engagement,
+        today,
+        needsHelp: help.needsHelp,
+        helpReasons: help.reasons,
+      };
     })
   );
 
-  res.json({ children: childrenWithStats, count: children.length });
+  res.json({
+    parent: parentRow
+      ? {
+          id: parentRow.id,
+          name: parentRow.name,
+          username: parentRow.username,
+          phone: parentRow.phone,
+        }
+      : { id: parent.id, name: parent.name, username: parent.username, phone: null },
+    children: childrenWithStats,
+    count: children.length,
+  });
 });

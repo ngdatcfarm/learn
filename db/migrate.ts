@@ -177,6 +177,31 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 3,
+    name: "parent_phone",
+    apply: async () => {
+      // Step 4: thêm users.phone để PH tự nhập SĐT nhận Zalo report.
+      const sql = fs.readFileSync(
+        path.join(MIGRATIONS_DIR, "003_parent_phone.sql"),
+        "utf-8"
+      );
+      const statements = splitSqlStatements(sql);
+      const conn = await getPool().getConnection();
+      try {
+        await conn.beginTransaction();
+        for (const stmt of statements) {
+          await conn.query(stmt);
+        }
+        await conn.commit();
+      } catch (err) {
+        await conn.rollback();
+        throw err;
+      } finally {
+        conn.release();
+      }
+    },
+  },
 ];
 
 async function ensureMigrationsTable(): Promise<void> {

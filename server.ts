@@ -29,6 +29,7 @@ import { dashboardRouter } from "./server/dashboard";
 import { questionBankRouter } from "./server/questionBank";
 import { aiRouter } from "./server/ai";
 import { adminRouter } from "./server/admin";
+import { profileRouter } from "./server/profile";
 import { registerJob, startCronJobs } from "./server/cron";
 import { runAudioCleanup } from "./server/jobs/audioCleanup";
 import { runParentReports } from "./server/jobs/parentReports";
@@ -99,6 +100,7 @@ app.use("/api/dashboard", dashboardRouter);
 app.use("/api/question-bank", questionBankRouter);
 app.use("/api/tutor", aiRouter(ai));
 app.use("/api/admin", adminRouter);
+app.use("/api/me", profileRouter);
 
 // ============================================================
 // Cron jobs (Step 6) — hourly tick
