@@ -275,8 +275,27 @@ export interface ParentChild {
  * GET /api/dashboard/teacher — server auto-resolves lớp đầu tiên của GV (admin → lớp bất kỳ).
  * Nếu muốn explicit classId (multi-class GV), dùng /api/dashboard/teacher/:classId sau.
  */
-export async function getTeacherDashboard(): Promise<TeacherDashboardResponse> {
-  return request<TeacherDashboardResponse>("GET", "/api/dashboard/teacher");
+export async function getTeacherDashboard(
+  classId?: string | null
+): Promise<TeacherDashboardResponse> {
+  return request<TeacherDashboardResponse>(
+    "GET",
+    classId ? `/api/dashboard/teacher/${classId}` : "/api/dashboard/teacher"
+  );
+}
+
+/** Step 8: lớp mà teacher hiện tại sở hữu (admin thấy tất cả). */
+export interface TeacherClassItem {
+  id: string;
+  name: string;
+  schedule: string | null;
+  description: string | null;
+  member_count: number;
+  created_at: string;
+}
+
+export async function listMyClasses(): Promise<{ classes: TeacherClassItem[] }> {
+  return request("GET", "/api/dashboard/teacher/classes");
 }
 
 export async function getParentDashboard(): Promise<ParentDashboard> {

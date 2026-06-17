@@ -17,12 +17,16 @@ import {
 import { SKILL_META, SkillId } from "../types";
 import {
   getTeacherDashboard,
+  listMyClasses,
+  TeacherClassItem,
   TeacherDashboardResponse,
   StudentWithStats,
 } from "../api/client";
 import sound from "../utils/sound";
 import { formatSkillValue } from "../utils/format";
 import KpiCard from "./ui/KpiCard";
+
+const SAVED_CLASS_KEY = "apex_teacher_class";
 
 // ============================================================
 // Helpers
@@ -77,12 +81,47 @@ export default function TeacherDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [myClasses, setMyClasses] = useState<TeacherClassItem[]>([]);
+  const [selectedClassId, setSelectedClassId] = useState<string | null>(null);
+  const [classListLoading, setClassListLoading] = useState(true);
 
-  const load = useCallback(async (showSpinner = true) => {
+  // Load class list + hydrate saved selection from localStorage
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await listMyClasses();
+        if (cancelled) return;
+        setMyClasses(res.classes);
+        // Chỉ set nếu user chưa click lớp nào trong lúc chờ listMyClasses
+        setSelectedClassId((prev) => {
+          if (prev != null) return prev;
+          let saved: string | null = null;
+          try {
+            saved = localStorage.getItem(SAVED_CLASS_KEY);
+          } catch (e) {
+            console.warn("localStorage read failed:", e);
+          }
+          return saved && res.classes.some((c) => c.id === saved)
+            ? saved
+            : res.classes[0]?.id ?? null;
+        });
+      } catch (e) {
+        console.warn("listMyClasses failed:", e);
+      } finally {
+        if (!cancelled) setClassListLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const load = useCallback(async (classId: string | null, showSpinner = true) => {
     if (showSpinner) setLoading(true);
     setError(null);
     try {
-      const res = await getTeacherDashboard();
+      const res = await getTeacherDashboard(classId);
       setData(res);
     } catch (e: any) {
       const msg = e?.error || "Không tải được dashboard.";
@@ -93,18 +132,51 @@ export default function TeacherDashboard() {
     }
   }, []);
 
+  // Re-fetch khi classId đổi (cancellation guard chống stale response)
   useEffect(() => {
-    load(true);
-  }, [load]);
+    if (selectedClassId == null) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    (async () => {
+      try {
+        const res = await getTeacherDashboard(selectedClassId);
+        if (cancelled) return;
+        setData(res);
+      } catch (e: any) {
+        if (cancelled) return;
+        const msg = e?.error || "Không tải được dashboard.";
+        setError(msg);
+      } finally {
+        if (cancelled) return;
+        setLoading(false);
+        setRefreshing(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedClassId]);
 
   const handleRefresh = () => {
     sound.playClick();
     setRefreshing(true);
-    load(false);
+    load(selectedClassId, false);
   };
 
-  // 1. Initial loading
-  if (loading) {
+  const handleSelectClass = (id: string) => {
+    if (id === selectedClassId) return;
+    sound.playClick();
+    setSelectedClassId(id);
+    try {
+      localStorage.setItem(SAVED_CLASS_KEY, id);
+    } catch (e) {
+      console.warn("localStorage write failed:", e);
+    }
+  };
+
+  // 1. Initial loading (chờ cả class list + data lớp)
+  if (loading || classListLoading) {
     return (
       <div className="w-full max-w-5xl mx-auto px-4 py-6">
         <div
@@ -120,8 +192,8 @@ export default function TeacherDashboard() {
     );
   }
 
-  // 2. Error (có thể là "Chưa có lớp nào." hoặc lỗi khác)
-  if (error || !data) {
+  // 1b. GV chưa có lớp nào (Step 8: edge case — listMyClasses trả [])
+  if (myClasses.length === 0) {
     return (
       <div className="w-full max-w-5xl mx-auto px-4 py-6">
         <div
@@ -130,14 +202,28 @@ export default function TeacherDashboard() {
         >
           <div className="text-3xl">🏫</div>
           <div className="text-base font-extrabold">
-            {error?.includes("Chưa có lớp nào")
-              ? "Bạn chưa được phân công lớp nào."
-              : "Không tải được dashboard"}
+            Bạn chưa được phân công lớp nào.
           </div>
           <p className="text-sm" style={{ color: "var(--muted)" }}>
-            {error?.includes("Chưa có lớp nào")
-              ? "Liên hệ admin để được thêm vào lớp nhé."
-              : error || "Lỗi không xác định."}
+            Liên hệ admin để được thêm vào lớp nhé.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // 2. Error (case 0-classes đã được handle ở 1b — ở đây chỉ là lỗi thật)
+  if (error || !data) {
+    return (
+      <div className="w-full max-w-5xl mx-auto px-4 py-6">
+        <div
+          className="p-8 rounded-3xl border text-center space-y-3"
+          style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border)" }}
+        >
+          <div className="text-3xl">🏫</div>
+          <div className="text-base font-extrabold">Không tải được dashboard</div>
+          <p className="text-sm" style={{ color: "var(--muted)" }}>
+            {error || "Lỗi không xác định."}
           </p>
           <button
             onClick={handleRefresh}
@@ -157,6 +243,14 @@ export default function TeacherDashboard() {
 
   return (
     <div className="w-full max-w-5xl mx-auto px-4 py-6 space-y-5">
+      {/* Pill nav — chỉ hiện khi GV dạy ≥ 2 lớp */}
+      {myClasses.length >= 2 && (
+        <ClassPillNav
+          classes={myClasses}
+          selectedId={selectedClassId}
+          onChange={handleSelectClass}
+        />
+      )}
       <ClassSection
         cls={cls}
         students={students}
@@ -165,6 +259,57 @@ export default function TeacherDashboard() {
         refreshing={refreshing}
         onRefresh={handleRefresh}
       />
+    </div>
+  );
+}
+
+// ============================================================
+// Class pill nav (Step 8: chọn lớp khi GV dạy ≥ 2 lớp)
+// ============================================================
+
+function ClassPillNav({
+  classes,
+  selectedId,
+  onChange,
+}: {
+  classes: TeacherClassItem[];
+  selectedId: string | null;
+  onChange: (id: string) => void;
+}) {
+  return (
+    <div
+      className="flex gap-1.5 p-1 rounded-2xl border overflow-x-auto"
+      style={{ backgroundColor: "var(--bg-soft)", borderColor: "var(--border)" }}
+    >
+      {classes.map((c) => {
+        const isActive = c.id === selectedId;
+        return (
+          <button
+            key={c.id}
+            onClick={() => onChange(c.id)}
+            className="flex-1 min-w-fit px-3 py-1.5 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1 transition-colors"
+            style={{
+              backgroundColor: isActive ? "var(--bg-card)" : "transparent",
+              color: isActive ? "var(--primary)" : "var(--muted)",
+              boxShadow: isActive ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+            }}
+            title={
+              c.schedule
+                ? `${c.schedule} • ${c.member_count} HS`
+                : `${c.member_count} HS`
+            }
+          >
+            <span className="text-sm leading-none">🏫</span>
+            <span className="hidden sm:inline">{c.name}</span>
+            <span
+              className="text-[10px] font-bold"
+              style={{ color: isActive ? "var(--primary)" : "var(--muted)" }}
+            >
+              {c.member_count}
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }
