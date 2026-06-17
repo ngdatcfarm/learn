@@ -44,11 +44,19 @@ export function CreateUserModal({
   const [cefrLevel, setCefrLevel] = useState("A1");
   const [goal, setGoal] = useState("Tổng quát");
   const [dailyGoal, setDailyGoal] = useState<DailyGoalMinutes>(15);
+  const [phone, setPhone] = useState("");
+  const [phoneError, setPhoneError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!username || !password || !name) return;
+    const trimmedPhone = phone.trim();
+    if (trimmedPhone && !/^\+?\d{9,15}$/.test(trimmedPhone)) {
+      setPhoneError("SĐT không hợp lệ (9-15 chữ số, có thể có + ở đầu).");
+      return;
+    }
+    setPhoneError(null);
     setSubmitting(true);
     try {
       const payload: CreateUserPayload = {
@@ -63,6 +71,7 @@ export function CreateUserModal({
         payload.cefr_level = cefrLevel;
         payload.goal = goal;
       }
+      if (trimmedPhone) payload.phone = trimmedPhone;
       await onSubmit(payload);
     } finally {
       setSubmitting(false);
@@ -140,6 +149,24 @@ export function CreateUserModal({
             <option value="teacher">👩‍🏫 Giáo viên</option>
             <option value="admin">🛡️ Quản trị viên</option>
           </select>
+        </Field>
+        <Field label="Số điện thoại" hint="Để trống nếu chưa có. 9-15 chữ số, có thể có + ở đầu.">
+          <input
+            type="tel"
+            value={phone}
+            onChange={(e) => {
+              setPhone(e.target.value);
+              if (phoneError) setPhoneError(null);
+            }}
+            className={inputClass()}
+            style={inputStyle}
+            placeholder="VD: 0912345678"
+          />
+          {phoneError && (
+            <p className="text-[11px] mt-1" style={{ color: "var(--danger)" }}>
+              {phoneError}
+            </p>
+          )}
         </Field>
         {role === "student" && (
           <>
@@ -227,6 +254,8 @@ export function EditUserModal({
   const [dailyGoal, setDailyGoal] = useState<DailyGoalMinutes>(
     ((user.daily_goal_minutes) || 15)
   );
+  const [phone, setPhone] = useState(user.phone || "");
+  const [phoneError, setPhoneError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const isStudent = user.role === "student";
   const isParent = user.role === "parent";
@@ -234,6 +263,12 @@ export function EditUserModal({
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    const trimmedPhone = phone.trim();
+    if (trimmedPhone && !/^\+?\d{9,15}$/.test(trimmedPhone)) {
+      setPhoneError("SĐT không hợp lệ (9-15 chữ số, có thể có + ở đầu).");
+      return;
+    }
+    setPhoneError(null);
     setSubmitting(true);
     try {
       const payload: PatchUserPayload = { name: name.trim() };
@@ -242,6 +277,11 @@ export function EditUserModal({
         payload.cefr_level = cefrLevel;
         payload.goal = goal;
         payload.daily_goal_minutes = dailyGoal;
+      }
+      // Phone: gửi nếu user đã có SĐT trước đó (kể cả clear) HOẶC vừa nhập mới.
+      // Match với pickUserFields: undefined = skip, null/"" = clear, string = set.
+      if (trimmedPhone !== (user.phone || "")) {
+        payload.phone = trimmedPhone || null;
       }
       await onSubmit(payload);
     } finally {
@@ -383,6 +423,24 @@ export function EditUserModal({
               </div>
             </>
           )}
+          <Field label="Số điện thoại" hint={isParent ? "SĐT PH nhận báo cáo Zalo. Để trống nếu chưa có." : "9-15 chữ số, có thể có + ở đầu."}>
+            <input
+              type="tel"
+              value={phone}
+              onChange={(e) => {
+                setPhone(e.target.value);
+                if (phoneError) setPhoneError(null);
+              }}
+              className={inputClass()}
+              style={inputStyle}
+              placeholder="VD: 0912345678"
+            />
+            {phoneError && (
+              <p className="text-[11px] mt-1" style={{ color: "var(--danger)" }}>
+                {phoneError}
+              </p>
+            )}
+          </Field>
           <p className="text-[11px]" style={{ color: "var(--muted)" }}>
             💡 Để đổi mật khẩu, dùng nút "Reset mật khẩu" ở danh sách.
           </p>

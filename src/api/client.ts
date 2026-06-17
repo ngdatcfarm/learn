@@ -325,6 +325,7 @@ export interface AdminUser {
   cefr_level: string | null;
   goal: string | null;
   daily_goal_minutes: number | null;
+  phone: string | null;
   created_at: string;
   last_login_at: string | null;
   deleted_at: string | null;
@@ -430,6 +431,7 @@ export interface CreateUserPayload {
   cefr_level?: string;
   goal?: string;
   daily_goal_minutes?: DailyGoalMinutes;
+  phone?: string | null;
 }
 
 export interface PatchUserPayload {
@@ -438,6 +440,7 @@ export interface PatchUserPayload {
   cefr_level?: string | null;
   goal?: string | null;
   daily_goal_minutes?: DailyGoalMinutes | null;
+  phone?: string | null;
 }
 
 export async function adminOverview(): Promise<AdminOverview> {

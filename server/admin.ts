@@ -109,6 +109,7 @@ interface UserListRow extends RowDataPacket {
   cefr_level: string | null;
   goal: string | null;
   daily_goal_minutes: number | null;
+  phone: string | null;
   created_at: string;
   last_login_at: string | null;
   deleted_at: string | null;
@@ -142,7 +143,7 @@ adminRouter.get("/users", async (req: Request, res: Response) => {
 
   const rows = (await query<UserListRow[]>(
     `SELECT u.id, u.username, u.name, u.role, u.level, u.cefr_level,
-            u.goal, u.daily_goal_minutes, u.created_at, u.last_login_at, u.deleted_at
+            u.goal, u.daily_goal_minutes, u.phone, u.created_at, u.last_login_at, u.deleted_at
      FROM users u
      ${where}
      ORDER BY u.role, u.name
@@ -160,7 +161,7 @@ adminRouter.get("/users/:id", async (req: Request, res: Response) => {
   const id = req.params.id;
   const user = await queryOne<UserListRow>(
     `SELECT id, username, name, role, level, cefr_level, goal, daily_goal_minutes,
-            created_at, last_login_at, deleted_at
+            phone, created_at, last_login_at, deleted_at
      FROM users WHERE id = ?`,
     [id]
   );
@@ -298,6 +299,7 @@ adminRouter.delete(
 );
 
 const VALID_ROLES = ["student", "parent", "teacher", "admin"] as const;
+const PHONE_REGEX = /^\+?\d{9,15}$/;
 
 function pickUserFields(body: any): {
   name?: string;
@@ -305,6 +307,7 @@ function pickUserFields(body: any): {
   cefr_level?: string | null;
   goal?: string | null;
   daily_goal_minutes?: number | null;
+  phone?: string | null;
 } {
   const out: any = {};
   if (body.name !== undefined) out.name = String(body.name).trim();
@@ -317,6 +320,14 @@ function pickUserFields(body: any): {
       throw new Error("daily_goal_minutes phải là 5, 15 hoặc 30.");
     }
     out.daily_goal_minutes = n;
+  }
+  if (body.phone !== undefined) {
+    // Empty string → null (xóa SĐT). Match profile.ts semantics.
+    const normalized = body.phone === "" ? null : body.phone;
+    if (normalized !== null && !PHONE_REGEX.test(String(normalized))) {
+      throw new Error("Số điện thoại không hợp lệ (9-15 chữ số, có thể có + ở đầu).");
+    }
+    out.phone = normalized === null ? null : String(normalized);
   }
   return out;
 }
@@ -357,8 +368,8 @@ adminRouter.post("/users", async (req: Request, res: Response) => {
   const { hash, salt } = hashPassword(password);
   await query<ResultSetHeader>(
     `INSERT INTO users (id, username, password_hash, password_salt, role, name,
-                        level, cefr_level, goal, daily_goal_minutes)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        level, cefr_level, goal, daily_goal_minutes, phone)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       username,
@@ -370,6 +381,7 @@ adminRouter.post("/users", async (req: Request, res: Response) => {
       fields.cefr_level ?? null,
       fields.goal ?? null,
       fields.daily_goal_minutes ?? 15,
+      fields.phone ?? null,
     ]
   );
 
@@ -378,13 +390,13 @@ adminRouter.post("/users", async (req: Request, res: Response) => {
     action: "user.create",
     targetType: "user",
     targetId: id,
-    details: { username, role, name },
+    details: { username, role, name, has_phone: !!fields.phone },
     ip: req.ip,
   });
 
   const user = await queryOne<UserListRow>(
     `SELECT id, username, name, role, level, cefr_level, goal,
-            daily_goal_minutes, created_at, deleted_at
+            daily_goal_minutes, phone, created_at, deleted_at
      FROM users WHERE id = ?`,
     [id]
   );
@@ -424,18 +436,25 @@ adminRouter.patch("/users/:id", async (req: Request, res: Response) => {
     params
   );
 
+  // Audit: sanitize phone (PII) — chỉ log presence, không log raw value
+  const auditDetails: any = { ...fields };
+  if ("phone" in auditDetails) {
+    auditDetails.has_phone = !!auditDetails.phone;
+    delete auditDetails.phone;
+  }
+
   await logAudit({
     actorId: admin.id,
     action: "user.update",
     targetType: "user",
     targetId: id,
-    details: fields,
+    details: auditDetails,
     ip: req.ip,
   });
 
   const user = await queryOne<UserListRow>(
     `SELECT id, username, name, role, level, cefr_level, goal,
-            daily_goal_minutes, created_at, deleted_at
+            daily_goal_minutes, phone, created_at, deleted_at
      FROM users WHERE id = ?`,
     [id]
   );
@@ -506,7 +525,7 @@ adminRouter.post("/users/:id/restore", async (req: Request, res: Response) => {
   });
   const user = await queryOne<UserListRow>(
     `SELECT id, username, name, role, level, cefr_level, goal,
-            daily_goal_minutes, created_at, deleted_at
+            daily_goal_minutes, phone, created_at, deleted_at
      FROM users WHERE id = ?`,
     [id]
   );
