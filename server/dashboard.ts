@@ -2,6 +2,7 @@
  * server/dashboard.ts — Teacher + Parent dashboards (MySQL)
  *
  * GET /api/dashboard/teacher            — Auto-resolve lớp đầu tiên của GV
+ * GET /api/dashboard/teacher/classes    — Step 8: list classes của GV (admin: all)
  * GET /api/dashboard/teacher/:classId   — Explicit classId
  * GET /api/dashboard/parent             — Danh sách con + skills summary
  *
@@ -131,6 +132,45 @@ dashboardRouter.get("/teacher", async (req: Request, res: Response) => {
   if (!cls) return res.status(404).json({ error: "Chưa có lớp nào." });
 
   return handleTeacherClass(req, res, cls.id, teacher);
+});
+
+interface TeacherClassRow {
+  id: string;
+  name: string;
+  schedule: string | null;
+  description: string | null;
+  member_count: number;
+  created_at: string;
+}
+
+/**
+ * GET /api/dashboard/teacher/classes
+ * Step 8: list classes của teacher hiện tại (admin thấy all).
+ * Route phải đặt TRƯỚC /teacher/:classId — Express match theo thứ tự, nếu đặt sau
+ * path "classes" sẽ bị match làm classId → ownership check fail → 403.
+ */
+dashboardRouter.get("/teacher/classes", async (req: Request, res: Response) => {
+  const teacher = await requireRole(req, res, ["teacher", "admin"]);
+  if (!teacher) return;
+  const isAdmin = teacher.role === "admin";
+  const rows = (await query<TeacherClassRow[]>(
+    isAdmin
+      ? `SELECT c.id, c.name, c.schedule, c.description, c.created_at,
+                COUNT(cm.student_id) AS member_count
+         FROM classes c
+         LEFT JOIN class_members cm ON cm.class_id = c.id
+         GROUP BY c.id
+         ORDER BY c.created_at ASC`
+      : `SELECT c.id, c.name, c.schedule, c.description, c.created_at,
+                COUNT(cm.student_id) AS member_count
+         FROM classes c
+         LEFT JOIN class_members cm ON cm.class_id = c.id
+         WHERE c.teacher_id = ?
+         GROUP BY c.id
+         ORDER BY c.created_at ASC`,
+    isAdmin ? [] : [teacher.id]
+  )) as TeacherClassRow[];
+  res.json({ classes: rows });
 });
 
 /**
