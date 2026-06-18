@@ -326,49 +326,26 @@ export function practiceRouter(ai: GoogleGenAI | null): Router {
       const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24h
       const fluencyScore = Math.max(0, Math.min(100, analysis.overall_score * 10));
 
-      // Atomic: 3 INSERT (speak_recording + skill_measurement + engagement_event)
-      await withTransaction(async (conn) => {
-        await conn.execute(
-          `INSERT INTO speak_recordings
-              (id, user_id, transcript, errors_json, analysis_text, audio_url,
-               audio_duration_ms, expires_at, prompt, topic, level, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-          [
-            recordingId,
-            user.id,
-            transcript,
-            JSON.stringify(analysis.errors),
-            analysis.encouragement,
-            audioUrl,
-            durationMs ?? null,
-            expiresAt,
-            resolved.prompt,
-            resolved.topic,
-            resolved.level,
-          ]
-        );
-        await conn.execute(
-          `INSERT INTO skill_measurements
-              (id, user_id, skill, metric, value, context_json, measured_at)
-           VALUES (?, ?, 'speak', 'fluency', ?, ?, NOW())`,
-          [
-            crypto.randomUUID(),
-            user.id,
-            fluencyScore,
-            JSON.stringify({ source: "speaking", itemId, recordingId }),
-          ]
-        );
-        await conn.execute(
-          `INSERT INTO engagement_events
-              (id, user_id, event, value, context_json, occurred_at)
-           VALUES (?, ?, 'task_done', ?, ?, NOW())`,
-          [
-            crypto.randomUUID(),
-            user.id,
-            fluencyScore,
-            JSON.stringify({ source: "speaking", itemId, recordingId }),
-          ]
-        );
+      // Atomic: 3 INSERT (speak_recordings + skill_measurements + engagement_events)
+      await recordPracticeAttempt({
+        userId: user.id,
+        source: "speaking",
+        skill: "speak",
+        metric: "fluency",
+        value: fluencyScore,
+        context: { source: "speaking", itemId, recordingId },
+        recording: {
+          recordingId,
+          transcript,
+          errorsJson: JSON.stringify(analysis.errors),
+          analysisText: analysis.encouragement,
+          audioUrl,
+          durationMs: durationMs ?? null,
+          expiresAt,
+          prompt: resolved.prompt,
+          topic: resolved.topic,
+          level: resolved.level,
+        },
       });
 
       const result: SpeakSubmitResult = {
@@ -435,48 +412,28 @@ export function practiceRouter(ai: GoogleGenAI | null): Router {
       const recordingId = crypto.randomUUID();
       const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24h
 
-      // Atomic: 3 INSERT (speak_recording + skill_measurement + engagement_event).
+      // Atomic: 3 INSERT (speak_recordings + skill_measurements + engagement_events).
       // listen.accuracy vì shadowing = nghe TTS rồi lặp lại → luyện listen.
-      await withTransaction(async (conn) => {
-        await conn.execute(
-          `INSERT INTO speak_recordings
-              (id, user_id, transcript, errors_json, analysis_text, audio_url,
-               audio_duration_ms, expires_at, prompt, topic, level, created_at)
-           VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, NOW())`,
-          [
-            recordingId,
-            user.id,
-            transcript,
-            audioUrl,
-            durationMs ?? null,
-            expiresAt,
-            resolved.reference,
-            resolved.topic,
-            resolved.level,
-          ]
-        );
-        await conn.execute(
-          `INSERT INTO skill_measurements
-              (id, user_id, skill, metric, value, context_json, measured_at)
-           VALUES (?, ?, 'listen', 'accuracy', ?, ?, NOW())`,
-          [
-            crypto.randomUUID(),
-            user.id,
-            score,
-            JSON.stringify({ source: "shadowing", itemId, recordingId }),
-          ]
-        );
-        await conn.execute(
-          `INSERT INTO engagement_events
-              (id, user_id, event, value, context_json, occurred_at)
-           VALUES (?, ?, 'task_done', ?, ?, NOW())`,
-          [
-            crypto.randomUUID(),
-            user.id,
-            score,
-            JSON.stringify({ source: "shadowing", itemId, recordingId }),
-          ]
-        );
+      // errors_json + analysis_text = null vì shadowing chỉ word-diff, không cần Gemini analyze.
+      await recordPracticeAttempt({
+        userId: user.id,
+        source: "shadowing",
+        skill: "listen",
+        metric: "accuracy",
+        value: score,
+        context: { source: "shadowing", itemId, recordingId },
+        recording: {
+          recordingId,
+          transcript,
+          errorsJson: null,
+          analysisText: null,
+          audioUrl,
+          durationMs: durationMs ?? null,
+          expiresAt,
+          prompt: resolved.reference,
+          topic: resolved.topic,
+          level: resolved.level,
+        },
       });
 
       const result: ShadowingCheckResult = {
@@ -641,18 +598,58 @@ async function resolvePracticeItem(
 }
 
 /**
- * Ghi 1 skill_measurement + 1 engagement_event(task_done) trong cùng transaction.
- * Dùng chung cho cả dictation + speaking (Step 9c) và sẽ dùng lại cho 9d/9e.
+ * Ghi 1 practice attempt trong cùng transaction.
+ * - Luôn INSERT skill_measurements + engagement_events(task_done)
+ * - Nếu `recording` được truyền, cũng INSERT speak_recordings (cho speaking + shadowing)
+ *
+ * Dùng chung cho dictation (9c, không có recording), speaking (9c), shadowing (9d).
+ * Một helper duy nhất đảm bảo 3 INSERTs (khi có recording) luôn atomic — không
+ * thể insert recording mà quên insert skill_measurement hoặc ngược lại.
  */
 async function recordPracticeAttempt(input: {
   userId: string;
-  source: "dictation" | "speaking" | string;
+  source: "dictation" | "speaking" | "shadowing" | string;
   skill: "read" | "write" | "listen" | "speak" | "learn";
   metric: string;
   value: number;
   context: Record<string, unknown>;
+  /** Optional: nếu có, INSERT vào speak_recordings (audio + transcript + expires_at). */
+  recording?: {
+    recordingId: string;
+    transcript: string;
+    errorsJson?: string | null;
+    analysisText?: string | null;
+    audioUrl: string;
+    durationMs?: number | null;
+    expiresAt: Date;
+    prompt: string | null;
+    topic: string | null;
+    level: string | null;
+  };
 }): Promise<void> {
   await withTransaction(async (conn) => {
+    if (input.recording) {
+      const r = input.recording;
+      await conn.execute(
+        `INSERT INTO speak_recordings
+            (id, user_id, transcript, errors_json, analysis_text, audio_url,
+             audio_duration_ms, expires_at, prompt, topic, level, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+        [
+          r.recordingId,
+          input.userId,
+          r.transcript,
+          r.errorsJson ?? null,
+          r.analysisText ?? null,
+          r.audioUrl,
+          r.durationMs ?? null,
+          r.expiresAt,
+          r.prompt,
+          r.topic,
+          r.level,
+        ]
+      );
+    }
     await conn.execute(
       `INSERT INTO skill_measurements
           (id, user_id, skill, metric, value, context_json, measured_at)

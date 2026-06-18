@@ -22,7 +22,7 @@
  * 9g sẽ seed content thật; fallback items đã có sẵn trong server/practice.ts.
  */
 
-import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
+import { useState, useEffect, useCallback, type ReactNode } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Headphones,
@@ -50,13 +50,8 @@ import {
   submitSpeak,
   submitShadowing,
 } from "../api/client";
-import {
-  checkMicSupport,
-  startRecording,
-  stopRecording,
-  makeChunkedRecorder,
-  uploadAudio,
-} from "../utils/audio";
+import { checkMicSupport, uploadAudio } from "../utils/audio";
+import { useAudioRecorder } from "../hooks/useAudioRecorder";
 import sound from "../utils/sound";
 import { scoreTier, SCORE_COLORS } from "../utils/format";
 
@@ -66,6 +61,34 @@ interface PracticeTabProps {
 
 type Mode = "dictation" | "speaking" | "shadowing";
 
+/**
+ * Per-mode metadata — dùng cho pill labels, list headers, item card body, empty state.
+ * Tách ra đây để thêm mode mới (9e/9f) chỉ cần update 1 nơi.
+ */
+const MODE_META: Record<
+  Mode,
+  { pillEmoji: string; listHeading: string; emptyEmoji: string; emptyHelper: string }
+> = {
+  dictation: {
+    pillEmoji: "📝",
+    listHeading: "Câu cần nghe",
+    emptyEmoji: "🎧",
+    emptyHelper: "nghe và gõ lại",
+  },
+  speaking: {
+    pillEmoji: "🎤",
+    listHeading: "Đề bài nói",
+    emptyEmoji: "🎙️",
+    emptyHelper: "thu âm câu trả lời",
+  },
+  shadowing: {
+    pillEmoji: "🎧",
+    listHeading: "Câu mẫu shadowing",
+    emptyEmoji: "🎧",
+    emptyHelper: "nghe câu mẫu rồi thu âm lặp lại",
+  },
+};
+
 const levelStyle: Record<string, { bg: string; fg: string }> = {
   A1: { bg: "var(--success-soft)", fg: "var(--success)" },
   A2: { bg: "var(--primary-soft)", fg: "var(--primary)" },
@@ -74,6 +97,18 @@ const levelStyle: Record<string, { bg: string; fg: string }> = {
   C1: { bg: "var(--danger-soft, var(--warning-soft))", fg: "var(--accent)" },
   C2: { bg: "var(--accent-soft)", fg: "var(--accent)" },
 };
+
+/**
+ * Lấy text hiển thị cho item card preview theo mode.
+ * Centralized để thêm mode mới chỉ cần update switch này.
+ */
+function getItemText(item: PracticeItem, mode: Mode): string {
+  switch (mode) {
+    case "dictation": return item.text || "";
+    case "speaking":  return item.prompt || "";
+    case "shadowing": return item.reference || "";
+  }
+}
 
 export default function PracticeTab({ onMeasured }: PracticeTabProps) {
   const [mode, setMode] = useState<Mode>("dictation");
@@ -198,9 +233,7 @@ export default function PracticeTab({ onMeasured }: PracticeTabProps) {
               className="text-xs font-extrabold uppercase tracking-widest"
               style={{ color: "var(--muted)" }}
             >
-              {mode === "dictation" ? "Câu cần nghe"
-                : mode === "speaking" ? "Đề bài nói"
-                : "Câu mẫu shadowing"}
+              {MODE_META[mode].listHeading}
             </h3>
             {items.map((item) => (
               <ItemCard
@@ -232,17 +265,12 @@ export default function PracticeTab({ onMeasured }: PracticeTabProps) {
                     className="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl"
                     style={{ backgroundColor: "var(--bg-soft)" }}
                   >
-                    {mode === "dictation" ? "🎧"
-                      : mode === "speaking" ? "🎙️"
-                      : "🎧"}
+                    {MODE_META[mode].emptyEmoji}
                   </div>
                   <div>
                     <h4 className="text-sm font-extrabold">Chọn bài để bắt đầu</h4>
                     <p className="text-xs mt-1 max-w-xs" style={{ color: "var(--muted)" }}>
-                      Nhấn vào một bài bên trái để{" "}
-                      {mode === "dictation" ? "nghe và gõ lại"
-                        : mode === "speaking" ? "thu âm câu trả lời"
-                        : "nghe câu mẫu rồi thu âm lặp lại"}.
+                      Nhấn vào một bài bên trái để {MODE_META[mode].emptyHelper}.
                     </p>
                   </div>
                 </motion.div>
@@ -394,9 +422,7 @@ function ItemCard({
         className="text-xs leading-snug line-clamp-2"
         style={{ color: "var(--foreground-soft)" }}
       >
-        {mode === "dictation" ? item.text
-          : mode === "speaking" ? item.prompt
-          : item.reference}
+        {getItemText(item, mode)}
       </p>
     </motion.button>
   );
@@ -684,110 +710,40 @@ function SpeakingPanel({
   onNext: () => void;
 }) {
   const micSupported = checkMicSupport();
-  const [recording, setRecording] = useState(false);
-  // audioUrl là single source of truth cho UI; audioBlobRef giữ Blob tương ứng
-  // để handleSubmit upload (Blob không cần re-render → dùng ref).
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
-  const audioBlobRef = useRef<Blob | null>(null);
-  const [durationMs, setDurationMs] = useState(0);
+  const {
+    audioUrl, audioBlobRef, durationMs, recording, error,
+    startRecording, stopRecording, reset,
+  } = useAudioRecorder(item.id);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<SpeakSubmitResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // Submit/upload errors tách riêng khỏi mic errors (hook quản lý error riêng).
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const startTimeRef = useRef<number>(0);
-
-  // Effect 1: sở hữu URL revocation. Khi audioUrl đổi (gồm set null),
-  // cleanup của effect trước chạy → revoke URL cũ. Đây là single owner.
+  // Reset panel-only state khi đổi item (hook đã lo recording state).
   useEffect(() => {
-    return () => {
-      if (audioUrl) URL.revokeObjectURL(audioUrl);
-    };
-  }, [audioUrl]);
-
-  // Effect 2: reset khi đổi item. Dừng recording, release stream, clear state.
-  // setAudioUrl(null) ở cuối trigger Effect 1 cleanup để revoke URL cũ.
-  useEffect(() => {
-    if (recorderRef.current && recorderRef.current.state !== "inactive") {
-      try { recorderRef.current.stop(); } catch { /* ignore */ }
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-    }
-    audioBlobRef.current = null;
-    setDurationMs(0);
     setResult(null);
-    setError(null);
-    setRecording(false);
-    setAudioUrl(null);
+    setSubmitError(null);
   }, [item.id]);
 
-  const handleReset = () => {
-    if (recorderRef.current && recorderRef.current.state !== "inactive") {
-      try { recorderRef.current.stop(); } catch { /* ignore */ }
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-    }
-    audioBlobRef.current = null;
-    setRecording(false);
-    setAudioUrl(null); // triggers Effect 1 cleanup
-    setDurationMs(0);
-    setResult(null);
-    setError(null);
-  };
-
   const handleStartRecording = async () => {
-    if (!micSupported) {
-      setError("Trình duyệt không hỗ trợ thu âm.");
-      return;
-    }
-    setError(null);
-    try {
-      const { recorder, stream } = await startRecording();
-      recorderRef.current = recorder;
-      streamRef.current = stream;
-      makeChunkedRecorder(recorder, () => {
-        // chunks tracked in recorder._chunks
-      });
-      startTimeRef.current = Date.now();
-      setRecording(true);
-    } catch (e: any) {
-      setError(e?.message || "Không truy cập được micro.");
-    }
+    if (!micSupported) return;
+    await startRecording();
   };
 
-  const handleStopRecording = async () => {
-    if (!recorderRef.current) return;
-    const elapsed = Date.now() - startTimeRef.current;
-    setDurationMs(elapsed);
-    try {
-      const blob = await stopRecording(recorderRef.current, streamRef.current || undefined);
-      audioBlobRef.current = blob;
-      setAudioUrl(URL.createObjectURL(blob));
-      setRecording(false);
-    } catch (e: any) {
-      setError(e?.message || "Dừng thu âm thất bại.");
-      setRecording(false);
-    }
+  const handleReset = () => {
+    reset();
+    setResult(null);
+    setSubmitError(null);
   };
 
   const handleSubmit = async () => {
     const blob = audioBlobRef.current;
-    if (!blob) {
-      setError("Bạn chưa thu âm.");
-      return;
-    }
+    if (!blob) return;
     sound.playClick();
     setSubmitting(true);
-    setError(null);
+    setSubmitError(null);
     try {
-      // Upload to server
       const { url: uploadedUrl, mime } = await uploadAudio(blob);
-      // Submit for analysis
       const r = await submitSpeak({
         itemId: item.id,
         audioUrl: uploadedUrl,
@@ -797,7 +753,7 @@ function SpeakingPanel({
       setResult(r);
       onMeasured().catch(() => {});
     } catch (e: any) {
-      setError(e?.message || "Gửi thất bại.");
+      setSubmitError(e?.message || "Gửi thất bại.");
     } finally {
       setSubmitting(false);
     }
@@ -878,7 +834,7 @@ function SpeakingPanel({
               </button>
             ) : (
               <button
-                onClick={handleStopRecording}
+                onClick={stopRecording}
                 className="flex-1 py-3 px-4 rounded-xl text-sm font-extrabold flex items-center justify-center gap-2 transition-all animate-pulse"
                 style={{
                   backgroundColor: "var(--danger, var(--warning))",
@@ -905,12 +861,12 @@ function SpeakingPanel({
             </div>
           )}
 
-          {error && (
+          {(error || submitError) && (
             <p
               className="text-xs text-center"
               style={{ color: "var(--danger, var(--warning))" }}
             >
-              {error}
+              {submitError || error}
             </p>
           )}
 
@@ -1123,44 +1079,20 @@ function ShadowingPanel({
 }) {
   const micSupported = checkMicSupport();
   const [playing, setPlaying] = useState(false);
-  const [recording, setRecording] = useState(false);
-  // audioUrl single-owner pattern (xem debugging.md → audioUrl ownership).
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
-  const audioBlobRef = useRef<Blob | null>(null);
-  const [durationMs, setDurationMs] = useState(0);
+  const {
+    audioUrl, audioBlobRef, durationMs, recording, error,
+    startRecording, stopRecording, reset,
+  } = useAudioRecorder(item.id);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<ShadowingCheckResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const startTimeRef = useRef<number>(0);
-
-  // Effect 1: sở hữu URL revocation. Khi audioUrl đổi (gồm set null),
-  // cleanup của effect trước chạy → revoke URL cũ. Single owner pattern.
+  // Reset panel-only state (TTS playing + result + submit error) khi đổi item.
+  // Hook đã lo recording state + URL revoke + stream release.
   useEffect(() => {
-    return () => {
-      if (audioUrl) URL.revokeObjectURL(audioUrl);
-    };
-  }, [audioUrl]);
-
-  // Effect 2: reset khi đổi item. Dừng recording, release stream, clear state.
-  // setAudioUrl(null) ở cuối trigger Effect 1 cleanup để revoke URL cũ.
-  useEffect(() => {
-    if (recorderRef.current && recorderRef.current.state !== "inactive") {
-      try { recorderRef.current.stop(); } catch { /* ignore */ }
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-    }
-    audioBlobRef.current = null;
-    setDurationMs(0);
-    setResult(null);
-    setError(null);
-    setRecording(false);
     setPlaying(false);
-    setAudioUrl(null);
+    setResult(null);
+    setSubmitError(null);
   }, [item.id]);
 
   const handlePlayReference = useCallback(() => {
@@ -1173,65 +1105,22 @@ function ShadowingPanel({
   }, [item.reference]);
 
   const handleStartRecording = async () => {
-    if (!micSupported) {
-      setError("Trình duyệt không hỗ trợ thu âm.");
-      return;
-    }
-    setError(null);
-    try {
-      const { recorder, stream } = await startRecording();
-      recorderRef.current = recorder;
-      streamRef.current = stream;
-      makeChunkedRecorder(recorder, () => {
-        // chunks tracked in recorder._chunks
-      });
-      startTimeRef.current = Date.now();
-      setRecording(true);
-    } catch (e: any) {
-      setError(e?.message || "Không truy cập được micro.");
-    }
-  };
-
-  const handleStopRecording = async () => {
-    if (!recorderRef.current) return;
-    const elapsed = Date.now() - startTimeRef.current;
-    setDurationMs(elapsed);
-    try {
-      const blob = await stopRecording(recorderRef.current, streamRef.current || undefined);
-      audioBlobRef.current = blob;
-      setAudioUrl(URL.createObjectURL(blob));
-      setRecording(false);
-    } catch (e: any) {
-      setError(e?.message || "Dừng thu âm thất bại.");
-      setRecording(false);
-    }
+    if (!micSupported) return;
+    await startRecording();
   };
 
   const handleReset = () => {
-    if (recorderRef.current && recorderRef.current.state !== "inactive") {
-      try { recorderRef.current.stop(); } catch { /* ignore */ }
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-    }
-    audioBlobRef.current = null;
-    setRecording(false);
-    setAudioUrl(null); // triggers Effect 1 cleanup
-    setDurationMs(0);
+    reset();
     setResult(null);
-    setError(null);
+    setSubmitError(null);
   };
 
   const handleSubmit = async () => {
     const blob = audioBlobRef.current;
-    if (!blob) {
-      setError("Bạn chưa thu âm.");
-      return;
-    }
+    if (!blob) return;
     sound.playClick();
     setSubmitting(true);
-    setError(null);
+    setSubmitError(null);
     try {
       const { url: uploadedUrl, mime } = await uploadAudio(blob);
       const r = await submitShadowing({
@@ -1243,7 +1132,7 @@ function ShadowingPanel({
       setResult(r);
       onMeasured().catch(() => {});
     } catch (e: any) {
-      setError(e?.message || "Gửi thất bại.");
+      setSubmitError(e?.message || "Gửi thất bại.");
     } finally {
       setSubmitting(false);
     }
@@ -1344,7 +1233,7 @@ function ShadowingPanel({
               </button>
             ) : (
               <button
-                onClick={handleStopRecording}
+                onClick={stopRecording}
                 className="flex-1 py-3 px-4 rounded-xl text-sm font-extrabold flex items-center justify-center gap-2 transition-all animate-pulse"
                 style={{
                   backgroundColor: "var(--danger, var(--warning))",
@@ -1371,12 +1260,12 @@ function ShadowingPanel({
             </div>
           )}
 
-          {error && (
+          {(error || submitError) && (
             <p
               className="text-xs text-center"
               style={{ color: "var(--danger, var(--warning))" }}
             >
-              {error}
+              {submitError || error}
             </p>
           )}
 
