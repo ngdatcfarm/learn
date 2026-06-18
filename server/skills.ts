@@ -19,6 +19,7 @@ import crypto from "node:crypto";
 import { query, queryOne, RowDataPacket, ResultSetHeader } from "../db/client";
 import { requireUser, AuthUser } from "./auth";
 import { getTodayMinutes } from "./queries/engagement";
+import { formatDateLocal } from "./utils/time";
 
 const VALID_SKILLS = ["read", "write", "listen", "speak", "learn"] as const;
 
@@ -302,6 +303,10 @@ interface EngagementEventRow extends RowDataPacket {
   occurred_at: string;
 }
 
+interface FreezeDateRow extends RowDataPacket {
+  used_for_date: string; // "YYYY-MM-DD" qua DATE_FORMAT
+}
+
 export async function computeEngagement(userId: string): Promise<{
   streak: number;
   avgSessionMinutes: number;
@@ -311,11 +316,19 @@ export async function computeEngagement(userId: string): Promise<{
   lastActive: string | null;
   totalEvents: number;
 }> {
-  const events = (await query<EngagementEventRow[]>(
-    `SELECT event, value, occurred_at FROM engagement_events
-     WHERE user_id = ? ORDER BY occurred_at DESC LIMIT 500`,
-    [userId]
-  )) as EngagementEventRow[];
+  // Parallel: events (giới hạn 500 mới nhất) + frozen dates (all time)
+  const [events, freezeRows] = await Promise.all([
+    query<EngagementEventRow[]>(
+      `SELECT event, value, occurred_at FROM engagement_events
+       WHERE user_id = ? ORDER BY occurred_at DESC LIMIT 500`,
+      [userId]
+    ),
+    query<FreezeDateRow[]>(
+      `SELECT DATE_FORMAT(used_for_date, '%Y-%m-%d') AS used_for_date
+       FROM streak_freezes WHERE user_id = ?`,
+      [userId]
+    ),
+  ]);
 
   if (events.length === 0) {
     return {
@@ -330,14 +343,17 @@ export async function computeEngagement(userId: string): Promise<{
   }
 
   // Streak: số ngày liên tiếp có ít nhất 1 event (đếm từ hôm nay ngược lại)
-  // MySQL DATETIME trả về "YYYY-MM-DD HH:MM:SS" khi dateStrings: true
-  const days = new Set(events.map((e) => e.occurred_at.split(" ")[0]));
+  // MySQL DATETIME trả về "YYYY-MM-DD HH:MM:SS" khi dateStrings: true (server timezone)
+  // Frozen days (Step 11) cũng count như "had activity" → tránh streak đứt khi HS được auto-freeze
+  // Dùng formatDateLocal (LOCAL TIME) để lookup key khớp với dates trả về từ MySQL.
+  const days = new Set<string>(events.map((e) => e.occurred_at.split(" ")[0]));
+  for (const f of freezeRows as FreezeDateRow[]) days.add(f.used_for_date);
   let streak = 0;
   const today = new Date();
   for (let i = 0; i < 365; i++) {
     const d = new Date(today);
     d.setDate(d.getDate() - i);
-    const key = d.toISOString().split("T")[0];
+    const key = formatDateLocal(d);
     if (days.has(key)) streak++;
     else if (i > 0) break;
   }

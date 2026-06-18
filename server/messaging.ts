@@ -46,6 +46,79 @@ import { logAudit } from "./audit";
 
 export const messagingRouter = Router();
 
+export interface DirectMessageResult {
+  threadId: string;
+  messageId: string;
+  created: boolean;
+}
+
+/**
+ * Send 1 direct (1-1) message từ sender → recipient.
+ * Find-or-create direct thread giữa 2 user, INSERT message, bump last_message_at.
+ *
+ * Wrap trong withTransaction để thread creation + participants + message insert
+ * cùng lúc (atomic).
+ *
+ * `subject` KHÔNG dùng cho direct thread — schema constraint: broadcast only
+ * (xem db/migrations/004_messaging.sql). Caller phải tự format subject/tiêu đề
+ * vào body nếu cần.
+ *
+ * Được dùng bởi:
+ *   - POST /threads (route handler) — user → user
+ *   - server/jobs/streakNudge.ts — admin (system actor) → PH/GV reminders
+ */
+export async function sendDirectMessage(
+  senderId: string,
+  recipientId: string,
+  body: string
+): Promise<DirectMessageResult> {
+  const existing = await queryOne<RowDataPacket & { id: string }>(
+    `SELECT t.id
+     FROM message_threads t
+     JOIN thread_participants a ON a.thread_id = t.id AND a.user_id = ?
+     JOIN thread_participants b ON b.thread_id = t.id AND b.user_id = ?
+     WHERE t.type = 'direct' AND t.deleted_at IS NULL
+     LIMIT 1`,
+    [senderId, recipientId]
+  );
+
+  const now = new Date()
+    .toISOString()
+    .slice(0, 19)
+    .replace("T", " ");
+
+  const threadId = existing?.id ?? crypto.randomUUID();
+  const messageId = crypto.randomUUID();
+  const created = !existing;
+
+  await withTransaction(async (conn) => {
+    if (created) {
+      await conn.execute(
+        `INSERT INTO message_threads (id, type, created_by, last_message_at)
+         VALUES (?, 'direct', ?, ?)`,
+        [threadId, senderId, now]
+      );
+      await conn.execute(
+        `INSERT INTO thread_participants (thread_id, user_id) VALUES (?, ?), (?, ?)`,
+        [threadId, senderId, threadId, recipientId]
+      );
+    } else {
+      // Bump last_message_at
+      await conn.execute(
+        `UPDATE message_threads SET last_message_at = ? WHERE id = ?`,
+        [now, threadId]
+      );
+    }
+    await conn.execute(
+      `INSERT INTO messages (id, thread_id, sender_id, body, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [messageId, threadId, senderId, body, now]
+    );
+  });
+
+  return { threadId, messageId, created };
+}
+
 // ============================================================
 // Row types
 // ============================================================
@@ -602,58 +675,16 @@ messagingRouter.post("/threads", async (req: Request, res: Response) => {
     });
   }
 
-  // Check existing direct thread giữa 2 user
-  const existing = await queryOne<RowDataPacket & { id: string }>(
-    `SELECT t.id
-     FROM message_threads t
-     JOIN thread_participants a ON a.thread_id = t.id AND a.user_id = ?
-     JOIN thread_participants b ON b.thread_id = t.id AND b.user_id = ?
-     WHERE t.type = 'direct' AND t.deleted_at IS NULL
-     LIMIT 1`,
-    [user.id, recipientId]
-  );
-
+  // Find-or-create direct thread + insert message (atomic via sendDirectMessage)
   const now = new Date()
     .toISOString()
     .slice(0, 19)
     .replace("T", " ");
-
-  let threadId: string;
-  let messageId: string;
-  let created = false;
-  if (existing) {
-    threadId = existing.id;
-    created = false;
-  } else {
-    threadId = crypto.randomUUID();
-    created = true;
-  }
-  messageId = crypto.randomUUID();
-
-  await withTransaction(async (conn) => {
-    if (created) {
-      await conn.execute(
-        `INSERT INTO message_threads (id, type, created_by, last_message_at)
-         VALUES (?, 'direct', ?, ?)`,
-        [threadId, user.id, now]
-      );
-      await conn.execute(
-        `INSERT INTO thread_participants (thread_id, user_id) VALUES (?, ?), (?, ?)`,
-        [threadId, user.id, threadId, recipientId]
-      );
-    } else {
-      // Bump last_message_at
-      await conn.execute(
-        `UPDATE message_threads SET last_message_at = ? WHERE id = ?`,
-        [now, threadId]
-      );
-    }
-    await conn.execute(
-      `INSERT INTO messages (id, thread_id, sender_id, body, created_at)
-       VALUES (?, ?, ?, ?, ?)`,
-      [messageId, threadId, user.id, text, now]
-    );
-  });
+  const { threadId, messageId, created } = await sendDirectMessage(
+    user.id,
+    recipientId,
+    text
+  );
 
   if (created) {
     await logAudit({

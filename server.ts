@@ -38,6 +38,8 @@ import { registerJob, startCronJobs } from "./server/cron";
 import { runAudioCleanup } from "./server/jobs/audioCleanup";
 import { runParentReports } from "./server/jobs/parentReports";
 import { runDbBackup } from "./server/jobs/dbBackup";
+import { runStreakFreeze } from "./server/jobs/streakFreeze";
+import { runStreakNudge } from "./server/jobs/streakNudge";
 
 dotenv.config();
 
@@ -131,6 +133,8 @@ app.use(
 registerJob("cleanup_expired_audio", 60 * 60 * 1000, runAudioCleanup);
 registerJob("send_parent_reports", 60 * 60 * 1000, runParentReports);
 registerJob("db_backup", 60 * 60 * 1000, runDbBackup); // Step 10a — daily at BACKUP_HOUR
+registerJob("streak_freeze", 60 * 60 * 1000, runStreakFreeze); // Step 11 — daily at 00:05
+registerJob("streak_nudge", 60 * 60 * 1000, runStreakNudge); // Step 11 — daily at 19:00
 startCronJobs();
 
 // 404 cho API
