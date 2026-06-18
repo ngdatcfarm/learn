@@ -23,6 +23,23 @@ export function hashWithSalt(password: string, saltHex: string): string {
 }
 
 /**
+ * Verify password với timing-safe comparison.
+ * Trả false nếu length mismatch (tránh timing leak).
+ */
+export function verifyPassword(
+  password: string,
+  saltHex: string,
+  expectedHashHex: string
+): boolean {
+  const computed = hashWithSalt(password, saltHex);
+  if (computed.length !== expectedHashHex.length) return false;
+  return crypto.timingSafeEqual(
+    Buffer.from(computed, "hex"),
+    Buffer.from(expectedHashHex, "hex")
+  );
+}
+
+/**
  * Tạo mật khẩu tạm thời readable: 10 ký tự [a-z0-9].
  * Dùng cho admin reset password endpoint.
  */

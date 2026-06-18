@@ -353,6 +353,25 @@ export async function updateMyPhone(
   return request("PATCH", "/api/me/phone", { phone });
 }
 
+/**
+ * PATCH /api/me/password — User tự đổi mật khẩu (đã authenticated).
+ * Body: { currentPassword, newPassword }
+ *
+ * Dùng sau khi user đã force-change lần đầu xong, muốn đổi voluntary.
+ * Server verify currentPassword, hash newPassword, UPDATE.
+ *
+ * Backend: server/profile.ts (PATCH /api/me/password)
+ */
+export async function changeMyPassword(
+  currentPassword: string,
+  newPassword: string
+): Promise<{ ok: boolean }> {
+  return request("PATCH", "/api/me/password", {
+    currentPassword,
+    newPassword,
+  });
+}
+
 // ============================================================
 // Admin endpoints (Step 6) — require role="admin"
 // ============================================================

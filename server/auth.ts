@@ -24,7 +24,7 @@
 import { Router, Request, Response } from "express";
 import crypto from "node:crypto";
 import { query, queryOne, RowDataPacket, ResultSetHeader } from "../db/client";
-import { hashWithSalt, hashPassword } from "./passwords";
+import { verifyPassword, hashPassword } from "./passwords";
 
 const TOKEN_TTL_DAYS = 30;
 const TOKEN_TTL_MS = TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000;
@@ -38,15 +38,6 @@ export interface AuthUser {
   cefrLevel?: string;
   goal?: string;
   dailyGoalMinutes?: number;
-}
-
-function verifyPassword(password: string, salt: string, expectedHash: string): boolean {
-  const computed = hashWithSalt(password, salt);
-  if (computed.length !== expectedHash.length) return false;
-  return crypto.timingSafeEqual(
-    Buffer.from(computed, "hex"),
-    Buffer.from(expectedHash, "hex")
-  );
 }
 
 async function issueToken(userId: string): Promise<{ token: string; expiresAt: string }> {
