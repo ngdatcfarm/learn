@@ -275,24 +275,61 @@ pm2 logs learn --err   # chỉ lỗi
 3. Format: SQL
 4. Click **Go** → download file `.sql`
 
-### Backup tự động (cron job)
+### Backup tự động (Step 10a — in-process cron)
 
-Tạo file `/etc/cron.daily/backup-learn-db.sh`:
+App tự chạy backup MySQL mỗi ngày qua `server/jobs/dbBackup.ts`. Không cần SSH setup gì thêm — chỉ cần đảm bảo:
 
+**1. `mysqldump` + `gzip` có trên PATH** (mặc định có trên cfarm.vn / Ubuntu / CentOS):
 ```bash
-#!/bin/bash
-mysqldump -u learn_user -p'<password>' learn_cfarm | gzip > /var/backups/learn-$(date +\%Y\%m\%d).sql.gz
+which mysqldump gzip
+# Kỳ vọng: /usr/bin/mysqldump, /bin/gzip
 ```
 
+**2. Backup dir tồn tại + app user có quyền ghi**:
 ```bash
-chmod +x /etc/cron.daily/backup-learn-db.sh
+# Mặc định: <project>/backups (relative). Production nên dùng path tuyệt đối:
+sudo mkdir -p /var/backups/learn
+sudo chown $USER:$USER /var/backups/learn
+```
+
+**3. Cấu hình trong `.env`** (optional — defaults đã hợp lý):
+```bash
+BACKUP_DIR=/var/backups/learn   # mặc định: <project>/backups
+BACKUP_HOUR=3                   # giờ chạy (mặc định 3 = 03:00 sáng)
+```
+
+**Cách hoạt động:**
+- Cron job `db_backup` chạy hourly (1 lần/giờ) — giống `audioCleanup` và `parentReports`
+- Mỗi tick: check NOW() có trong cửa sổ ±15 phút của `BACKUP_HOUR` không
+- Nếu đúng → spawn `mysqldump` → pipe qua `gzip` → ghi file `learn-YYYYMMDD-HHMM.sql.gz`
+- Idempotent: nếu file backup của hôm nay đã tồn tại → skip (không overwrite)
+- Rotation: tự động xoá file cũ, chỉ giữ lại 7 file gần nhất
+- Mỗi lần chạy (thành công/lỗi) đều ghi vào bảng `cron_job_runs` — admin xem ở Admin Dashboard → tab "Cron"
+
+**File output ví dụ:**
+```
+/var/backups/learn/
+├── learn-20260618-0307.sql.gz   # 7 ngày gần nhất
+├── learn-20260617-0307.sql.gz
+├── ...
+└── learn-20260612-0307.sql.gz
 ```
 
 ### Restore từ backup
 
 ```bash
-gunzip -c backup-learn-20260615.sql.gz | mysql -u learn_user -p learn_cfarm
+# Từ file .sql.gz
+gunzip -c /var/backups/learn/learn-20260618-0307.sql.gz | mysql -u learn_user -p learn_cfarm
 ```
+
+**Lưu ý restore:**
+- File dump dùng `--databases` nên có CREATE DATABASE + USE — restore vào MySQL trống OK
+- Nếu DB hiện tại có data, restore sẽ GHI ĐÈ (không merge) — cẩn thận!
+- Trước khi restore production, nên backup bản hiện tại trước:
+  ```bash
+  mysqldump -u learn_user -p'...' learn_cfarm | gzip > /tmp/pre-restore-backup.sql.gz
+  ```
+- Nếu app đang chạy → `pm2 stop learn` trước khi restore để tránh data inconsistency
 
 ---
 
@@ -303,6 +340,8 @@ gunzip -c backup-learn-20260615.sql.gz | mysql -u learn_user -p learn_cfarm
 - [ ] Login bằng `admin / admin123` OK
 - [ ] **ĐỔI MẬT KHẨU ADMIN** ngay (nếu chưa đổi)
 - [ ] PM2 auto-restart đã save (`pm2 save`)
-- [ ] Backup cron job đã set (nếu cần)
+- [ ] `mysqldump` + `gzip` có trên PATH (cho auto-backup Step 10a)
+- [ ] `BACKUP_DIR` (vd `/var/backups/learn`) tồn tại + app user có quyền ghi
+- [ ] Đợi qua 03:00 sáng hôm sau, check `/var/backups/learn/` có file `learn-YYYYMMDD-HHMM.sql.gz`
 - [ ] Test API `/api/auth/login` với user `nguyen / nguyen123` (sau khi seed)
 - [ ] Verify data trong phpMyAdmin (bảng `users` có 5+ rows)

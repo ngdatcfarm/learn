@@ -37,6 +37,7 @@ import { flashcardsRouter } from "./server/flashcards";
 import { registerJob, startCronJobs } from "./server/cron";
 import { runAudioCleanup } from "./server/jobs/audioCleanup";
 import { runParentReports } from "./server/jobs/parentReports";
+import { runDbBackup } from "./server/jobs/dbBackup";
 
 dotenv.config();
 
@@ -124,11 +125,12 @@ app.use(
 );
 
 // ============================================================
-// Cron jobs (Step 6) — hourly tick
+// Cron jobs (Step 6+) — hourly tick
 // Step 7+ sẽ thêm MySQL GET_LOCK() cho multi-instance PM2.
 // ============================================================
 registerJob("cleanup_expired_audio", 60 * 60 * 1000, runAudioCleanup);
 registerJob("send_parent_reports", 60 * 60 * 1000, runParentReports);
+registerJob("db_backup", 60 * 60 * 1000, runDbBackup); // Step 10a — daily at BACKUP_HOUR
 startCronJobs();
 
 // 404 cho API

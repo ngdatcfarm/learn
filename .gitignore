@@ -12,3 +12,6 @@ coverage/
 
 # Local data dir (không còn dùng sau khi chuyển sang MySQL)
 data/
+
+# MySQL dump backups (Step 10a) — generated in-process by dbBackup cron job
+backups/

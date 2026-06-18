@@ -1,6 +1,6 @@
 # Roadmap & Tiến độ dự án `thaoenglish/learn`
 
-> Cập nhật lần cuối: 2026-06-16
+> Cập nhật lần cuối: 2026-06-18
 > Mục đích: Theo dõi các Step đã chốt, đang làm, và sắp tới — để mỗi lần quay lại trao đổi đều biết kế hoạch tới đâu.
 
 ---
@@ -18,7 +18,18 @@
 | 4c | Routing: isParent branch + isStaff rename | ✅ Done 2026-06-15 | Commit `12fa10a` |
 | 5 | TeacherDashboard + class matrix view | ✅ Done | Commit `8d6970c` |
 | 6 | Admin dashboard + Zalo + parent reports + audio retention | ✅ Done 2026-06-15 | Commit `c7cfa4e` |
-| **6.5** | **Admin: quản lý liên kết PH ↔ HS qua EditUserModal** | ✅ **Done 2026-06-16** | Commit `fd56b29` + 4 fix commits → `ccfbb98` |
+| 6.5 | Admin: quản lý liên kết PH ↔ HS qua EditUserModal | ✅ Done 2026-06-16 | Commit `fd56b29` + 4 fix commits → `ccfbb98` |
+| 7 | Inbox nội bộ PH ↔ GV/Admin + broadcast | ✅ Done 2026-06-16 | xem `step7-messaging.md` |
+| 8 | Multi-class cho GV (backend + FE pill nav) | ✅ Done 2026-06-17 | xem `step8-multi-class.md` |
+| 8b | Admin edit phone cho user (EditUserModal + CreateUserModal) | ✅ Done 2026-06-17 | xem `step8b-admin-phone-edit.md` |
+| 9a | Audio infra (MediaRecorder + multer + /uploads) | ✅ Done 2026-06-17 | |
+| 9b | Gemini multimodal (transcribe + error analysis) | ✅ Done 2026-06-17 | |
+| 9c | Dictation + Speaking prompt UI | ✅ Done 2026-06-17 | |
+| 9d | Shadowing + useAudioRecorder hook + recordPracticeAttempt | ✅ Done 2026-06-17 | |
+| 9e | Voice input cho AILab chat | ✅ Done 2026-06-17 | |
+| 9f | SRS flashcard — SM-2 algorithm + 12 seed vocab + UI session | ✅ Done 2026-06-18 | |
+| 9g | Tab restructure (PracticeTab 4 mode) + seed 36 practice items | ✅ Done 2026-06-18 | |
+| **10a** | **Backup tự động (in-process mysqldump + gzip + rotate 7)** | ✅ **Done 2026-06-18** | xem `docs/04-deploy-cfarm.md` |
 
 ---
 
@@ -88,12 +99,11 @@ fd56b29 feat: admin can manage parent-student links via EditUserModal
   - Đăng ký OA + lấy credentials
   - Swap `server/zalo.ts` từ stub → real ZNS API
   - Test với 1 PH trước khi rollout
-- **Backup tự động** — MySQL dump hàng ngày qua cron job (xem `docs/04-deploy-cfarm.md`). Chưa set up.
 
 ### Ưu tiên trung bình
 - **Step 3 — Daily goal progress bar (HS)** — đã skip từ lâu. Hiện `dailyGoalMinutes` đã có ở API + `DAILY_GOAL_OPTIONS` đã có ở FE; chỉ thiếu progress bar component.
-- **Multi-class cho GV** — hiện `GET /api/dashboard/teacher` auto-resolve lớp đầu tiên. Cần UI chọn lớp khi GV dạy ≥ 2 lớp.
 - **Force change password** sau khi admin reset — hiện user có thể giữ temp password mãi. Cần flow "đổi MK lần đầu".
+- **Step 10b+ — Upload backup lên cloud storage** (S3 / Google Drive / Backblaze B2) — hiện backup local trên server, nếu server die mất cả data. Nên off-site backup hàng tuần.
 
 ### Ưu tiên thấp
 - **Step 7+**: MySQL `GET_LOCK()` cho cron multi-instance (khi scale PM2 cluster)

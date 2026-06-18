@@ -24,7 +24,20 @@ import "dotenv/config";
 // Config
 // ============================================================
 
-function loadConfig(): PoolOptions {
+export interface MysqlEnvConfig {
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  database: string;
+}
+
+/**
+ * Đọc + validate MySQL config từ env. Throw nếu thiếu biến bắt buộc.
+ * Export để các tiến trình ngoài pool (vd `dbBackup` cron job) có thể dùng
+ * chung nguồn config, tránh drift giữa app và external CLI.
+ */
+export function loadMysqlEnvConfig(): MysqlEnvConfig {
   const host = process.env.MYSQL_HOST;
   const user = process.env.MYSQL_USER;
   const password = process.env.MYSQL_PASSWORD;
@@ -41,6 +54,13 @@ function loadConfig(): PoolOptions {
     user,
     password,
     database,
+  };
+}
+
+function loadConfig(): PoolOptions {
+  const cfg = loadMysqlEnvConfig();
+  return {
+    ...cfg,
     waitForConnections: true,
     connectionLimit: parseInt(process.env.MYSQL_POOL_SIZE || "10", 10),
     queueLimit: 0,
