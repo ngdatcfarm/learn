@@ -42,6 +42,8 @@ export interface SkillsResponse {
   engagement: {
     streak: number;
     avgSessionMinutes: number;
+    /** Tổng phút học hôm nay (sum session_end.value từ 00:00 hôm nay). */
+    minutesToday: number;
     retryRate: number;
     helpSeekingRate: number;
     dropoutPerTask: number;

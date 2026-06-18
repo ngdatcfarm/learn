@@ -92,6 +92,7 @@ function mapSkillsResponse(res: SkillsResponse): { skills: LearnerSkills; engage
   const engagement: EngagementMetrics = {
     streak: e.streak ?? 0,
     avgSessionMinutes: e.avgSessionMinutes ?? 0,
+    minutesToday: e.minutesToday ?? 0,
     retryRate: e.retryRate ?? 0,
     helpSeekingRate: e.helpSeekingRate ?? 0,
     dropoutPerTask: e.dropoutPerTask ?? 0,

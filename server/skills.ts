@@ -18,6 +18,7 @@ import { Router, Request, Response } from "express";
 import crypto from "node:crypto";
 import { query, queryOne, RowDataPacket, ResultSetHeader } from "../db/client";
 import { requireUser, AuthUser } from "./auth";
+import { getTodayMinutes } from "./queries/engagement";
 
 const VALID_SKILLS = ["read", "write", "listen", "speak", "learn"] as const;
 
@@ -62,11 +63,12 @@ skillsRouter.post("/measure", async (req: Request, res: Response) => {
 skillsRouter.get("/me", async (req: Request, res: Response) => {
   const user = await requireUser(req, res);
   if (!user) return;
-  const [skills, engagement] = await Promise.all([
+  const [skills, engagement, minutesToday] = await Promise.all([
     computeCurrentSkills(user.id),
     computeEngagement(user.id),
+    getTodayMinutes(user.id),
   ]);
-  res.json({ skills, engagement });
+  res.json({ skills, engagement: { ...engagement, minutesToday } });
 });
 
 /**

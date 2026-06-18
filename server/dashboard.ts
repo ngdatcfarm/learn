@@ -16,6 +16,7 @@ import { Router, Request, Response } from "express";
 import { query, queryOne, RowDataPacket } from "../db/client";
 import { requireRole, AuthUser } from "./auth";
 import { computeCurrentSkills, computeEngagement } from "./skills";
+import { getTodayActivity } from "./queries/engagement";
 
 export const dashboardRouter = Router();
 
@@ -34,47 +35,6 @@ interface StudentRow extends RowDataPacket {
   cefr_level: string | null;
   goal: string | null;
   joined_at: string;
-}
-
-interface ActivityRow {
-  task_done_today: number;
-  minutes_today: number;
-  measurements_today: number;
-}
-
-/**
- * Hoạt động trong ngày của 1 HS — dùng cho Teacher matrix
- *  - task_done_today: số task_done hôm nay
- *  - minutes_today:    tổng phút session hôm nay (từ session_end events)
- *  - measurements_today: số skill_measurements hôm nay
- */
-async function getTodayActivity(userId: string): Promise<ActivityRow> {
-  const taskDoneRow = (await queryOne<RowDataPacket & { cnt: number }>(
-    `SELECT COUNT(*) AS cnt FROM engagement_events
-     WHERE user_id = ? AND event = 'task_done'
-       AND occurred_at >= CURDATE() AND occurred_at < CURDATE() + INTERVAL 1 DAY`,
-    [userId]
-  )) as { cnt: number } | undefined;
-
-  const minutesRow = (await queryOne<RowDataPacket & { total_min: number | null }>(
-    `SELECT COALESCE(SUM(value), 0) AS total_min FROM engagement_events
-     WHERE user_id = ? AND event = 'session_end' AND value IS NOT NULL
-       AND occurred_at >= CURDATE() AND occurred_at < CURDATE() + INTERVAL 1 DAY`,
-    [userId]
-  )) as { total_min: number | null } | undefined;
-
-  const measRow = (await queryOne<RowDataPacket & { cnt: number }>(
-    `SELECT COUNT(*) AS cnt FROM skill_measurements
-     WHERE user_id = ?
-       AND measured_at >= CURDATE() AND measured_at < CURDATE() + INTERVAL 1 DAY`,
-    [userId]
-  )) as { cnt: number } | undefined;
-
-  return {
-    task_done_today: taskDoneRow?.cnt ?? 0,
-    minutes_today: minutesRow?.total_min ?? 0,
-    measurements_today: measRow?.cnt ?? 0,
-  };
 }
 
 /**

@@ -140,6 +140,8 @@ export interface EngagementMetrics {
   streak: number;
   /** Thời gian học trung bình mỗi phiên (phút). */
   avgSessionMinutes: number;
+  /** Tổng phút học trong ngày hôm nay (daily goal bar dùng cái này). */
+  minutesToday: number;
   /** Tỉ lệ làm lại bài sai (0-1). Cao = HS không bỏ cuộc. */
   retryRate: number;
   /** Tần suất dùng hint/dịch (0-1). Cao = cần hỗ trợ nhiều. */
@@ -198,6 +200,7 @@ export const DEFAULT_SKILLS: LearnerSkills = {
 export const DEFAULT_ENGAGEMENT: EngagementMetrics = {
   streak: 0,
   avgSessionMinutes: 0,
+  minutesToday: 0,
   retryRate: 0,
   helpSeekingRate: 0,
   dropoutPerTask: 0,

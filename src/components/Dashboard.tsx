@@ -76,11 +76,11 @@ export default function Dashboard({ profile, setProfile, onNavigate, onMeasured 
   const greeting = hour < 12 ? "Chào buổi sáng" : hour < 18 ? "Chào buổi chiều" : "Chào buổi tối";
   const greetingEmoji = hour < 12 ? "🌅" : hour < 18 ? "☀️" : "🌙";
 
-  // Tính daily progress từ engagement.avgSessionMinutes / dailyGoalMinutes
-  const dailyProgressPct = Math.min(
-    100,
-    Math.round((profile.engagement.avgSessionMinutes / profile.dailyGoalMinutes) * 100)
-  );
+  // Daily goal: phút học HÔM NAY (tổng session_end.value từ 00:00) / mục tiêu
+  const minutesToday = profile.engagement.minutesToday ?? 0;
+  const goalMinutes = profile.dailyGoalMinutes;
+  const dailyProgressPct = Math.min(100, Math.round((minutesToday / goalMinutes) * 100));
+  const goalReached = minutesToday >= goalMinutes;
 
   const skillOrder: SkillId[] = ["read", "write", "listen", "speak", "learn"];
 
@@ -165,19 +165,24 @@ export default function Dashboard({ profile, setProfile, onNavigate, onMeasured 
                   Mục tiêu hôm nay
                 </h3>
                 <p className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>
-                  Lộ trình học tập phù hợp với bạn — mỗi ngày một bước nhỏ
+                  {goalReached
+                    ? "Bạn đã chinh phục mục tiêu hôm nay rồi — tuyệt vời!"
+                    : minutesToday === 0
+                      ? "Bắt đầu học để chinh phục mục tiêu nhé — mỗi phút đều có giá trị"
+                      : `Còn ${Math.max(0, goalMinutes - minutesToday)} phút nữa là tới đích rồi`}
                 </p>
               </div>
-              <span
-                className="text-xs font-extrabold px-3 py-1 rounded-full border"
-                style={{
-                  backgroundColor: "var(--primary-soft)",
-                  color: "var(--primary)",
-                  borderColor: "var(--primary)",
-                }}
-              >
-                {dailyProgressPct}% xong
-              </span>
+              <div className="text-right">
+                <div className="text-base font-extrabold" style={{ color: goalReached ? "var(--success)" : "var(--primary)" }}>
+                  {minutesToday}<span style={{ color: "var(--muted)" }} className="text-xs font-bold"> / {goalMinutes} phút</span>
+                </div>
+                <div
+                  className="text-[10px] font-extrabold uppercase tracking-wider mt-0.5"
+                  style={{ color: goalReached ? "var(--success)" : "var(--muted)" }}
+                >
+                  {goalReached ? "🎉 Đạt mục tiêu!" : `${dailyProgressPct}% xong`}
+                </div>
+              </div>
             </div>
 
             {/* Progress bar */}
@@ -189,7 +194,11 @@ export default function Dashboard({ profile, setProfile, onNavigate, onMeasured 
                 initial={{ width: 0 }}
                 animate={{ width: `${dailyProgressPct}%` }}
                 className="h-full rounded-full"
-                style={{ background: "linear-gradient(90deg, var(--primary), var(--accent))" }}
+                style={{
+                  background: goalReached
+                    ? "linear-gradient(90deg, var(--success), var(--accent))"
+                    : "linear-gradient(90deg, var(--primary), var(--accent))",
+                }}
                 transition={{ duration: 0.8 }}
               />
             </div>
