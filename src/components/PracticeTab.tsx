@@ -39,6 +39,7 @@ import {
   ArrowRight,
   Type,
   Lightbulb,
+  BookMarked,
 } from "lucide-react";
 import {
   PracticeItem,
@@ -49,21 +50,23 @@ import {
   checkDictation,
   submitSpeak,
   submitShadowing,
+  listDueFlashcards,
 } from "../api/client";
 import { checkMicSupport, uploadAudio } from "../utils/audio";
 import { useAudioRecorder } from "../hooks/useAudioRecorder";
 import sound from "../utils/sound";
 import { scoreTier, SCORE_COLORS } from "../utils/format";
+import FlashcardSession from "./FlashcardSession";
 
 interface PracticeTabProps {
   onMeasured: () => Promise<void>;
 }
 
-type Mode = "dictation" | "speaking" | "shadowing";
+type Mode = "dictation" | "speaking" | "shadowing" | "vocab";
 
 /**
  * Per-mode metadata — dùng cho pill labels, list headers, item card body, empty state.
- * Tách ra đây để thêm mode mới (9e/9f) chỉ cần update 1 nơi.
+ * Tách ra đây để thêm mode mới (9e/9f/9g) chỉ cần update 1 nơi.
  */
 const MODE_META: Record<
   Mode,
@@ -87,6 +90,12 @@ const MODE_META: Record<
     emptyEmoji: "🎧",
     emptyHelper: "nghe câu mẫu rồi thu âm lặp lại",
   },
+  vocab: {
+    pillEmoji: "🎴",
+    listHeading: "Ôn tập SRS",
+    emptyEmoji: "🎴",
+    emptyHelper: "ôn tập từ vựng theo lịch Spaced Repetition",
+  },
 };
 
 const levelStyle: Record<string, { bg: string; fg: string }> = {
@@ -107,6 +116,7 @@ function getItemText(item: PracticeItem, mode: Mode): string {
     case "dictation": return item.text || "";
     case "speaking":  return item.prompt || "";
     case "shadowing": return item.reference || "";
+    case "vocab":     return "";  // vocab mode không dùng ItemCard
   }
 }
 
@@ -120,9 +130,16 @@ export default function PracticeTab({ onMeasured }: PracticeTabProps) {
   // Load items when mode changes
   useEffect(() => {
     let cancelled = false;
+    setSelectedItem(null);
+    // Vocab mode dùng FlashcardSession riêng — không cần list items ở đây
+    if (mode === "vocab") {
+      setItems([]);
+      setLoading(false);
+      setError(null);
+      return;
+    }
     setLoading(true);
     setError(null);
-    setSelectedItem(null);
     listPracticeItems(mode)
       .then((res) => {
         if (!cancelled) setItems(res.items);
@@ -153,7 +170,7 @@ export default function PracticeTab({ onMeasured }: PracticeTabProps) {
             Luyện tập
           </h2>
           <p className="text-sm mt-0.5" style={{ color: "var(--muted)" }}>
-            Dictation (nghe + gõ), Speaking (nói + AI chấm), Shadowing (nghe + lặp) 🦉
+            Dictation · Speaking · Shadowing · Từ vựng (SRS) 🦉
           </p>
         </div>
 
@@ -195,11 +212,23 @@ export default function PracticeTab({ onMeasured }: PracticeTabProps) {
             label="Shadowing"
             emoji="🎧"
           />
+          <ModePill
+            active={mode === "vocab"}
+            onClick={() => {
+              sound.playClick();
+              setMode("vocab");
+            }}
+            icon={<BookMarked className="w-3.5 h-3.5" />}
+            label="Từ vựng"
+            emoji="🎴"
+          />
         </div>
       </div>
 
       {/* BODY */}
-      {loading ? (
+      {mode === "vocab" ? (
+        <VocabHeroPanel onMeasured={onMeasured} />
+      ) : loading ? (
         <div className="text-center py-12 text-sm" style={{ color: "var(--muted)" }}>
           Đang tải bài luyện...
         </div>
@@ -1389,6 +1418,136 @@ function ShadowingPanel({
           </motion.div>
         )}
       </AnimatePresence>
+    </div>
+  );
+}
+
+// ============================================================
+// VocabHeroPanel — Step 9g
+//
+// Hero card cho SRS mode (PracticeTab). Hiển thị due count + "Bắt đầu" button
+// mở FlashcardSession modal. Khác với 3 mode kia:
+//   - Không có danh sách items — vocab pool lấy từ question_bank (template_type='flashcard')
+//   - Modal mở full-screen session (FlashcardSession tự lo load list)
+//   - Refresh count khi modal đóng (effect chạy lại khi vocabOpen → false)
+// ============================================================
+function VocabHeroPanel({ onMeasured }: { onMeasured: () => Promise<void> }) {
+  const [dueCount, setDueCount] = useState<number | null>(null);
+  const [vocabOpen, setVocabOpen] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    // Skip khi modal đang mở (modal tự fetch listDueFlashcards khi mount).
+    // Effect chạy lại khi vocabOpen → false, tức là sau khi modal đóng → fetch count mới.
+    if (vocabOpen) return;
+    (async () => {
+      try {
+        const res = await listDueFlashcards(20);
+        if (!cancelled) setDueCount(res.count);
+      } catch {
+        if (!cancelled) setDueCount(0);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [vocabOpen]);
+
+  return (
+    <>
+      <div
+        className="p-6 sm:p-8 rounded-3xl border-2 space-y-5 shadow-md"
+        style={{
+          backgroundColor: "var(--bg-card)",
+          borderColor: "var(--primary)",
+        }}
+      >
+        <div className="flex items-center gap-3">
+          <div
+            className="w-14 h-14 rounded-2xl flex items-center justify-center text-3xl shrink-0"
+            style={{ backgroundColor: "var(--primary-soft)" }}
+          >
+            🎴
+          </div>
+          <div>
+            <span
+              className="text-[10px] font-extrabold uppercase tracking-widest px-2 py-0.5 rounded-full border inline-block"
+              style={{
+                backgroundColor: "var(--accent-soft)",
+                color: "var(--accent)",
+                borderColor: "var(--accent)",
+              }}
+            >
+              Spaced Repetition
+            </span>
+            <h3 className="text-lg md:text-xl font-extrabold tracking-tight mt-1.5">
+              Ôn tập từ vựng theo lịch
+            </h3>
+            <p className="text-sm mt-0.5" style={{ color: "var(--muted)" }}>
+              Thuật toán SM-2 tự tính lịch ôn cho từng từ — quên sớm thì gặp lại sớm, nhớ lâu thì kéo dài.
+            </p>
+          </div>
+        </div>
+
+        <div
+          className="grid grid-cols-3 gap-3 p-4 rounded-2xl border"
+          style={{ backgroundColor: "var(--bg-soft)", borderColor: "var(--border-soft)" }}
+        >
+          <Stat label="Đến hạn" value={dueCount === null ? "…" : String(dueCount)} accent />
+          <Stat label="Cách dùng" value="Lật thẻ" />
+          <Stat label="Đánh giá" value="4 mức" />
+        </div>
+
+        <button
+          onClick={() => {
+            sound.playClick();
+            setVocabOpen(true);
+          }}
+          disabled={dueCount === 0}
+          className="w-full py-4 px-5 rounded-2xl text-sm font-extrabold flex items-center justify-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+          style={{
+            backgroundColor: "var(--primary)",
+            color: "var(--on-primary)",
+          }}
+        >
+          <Sparkles className="w-4 h-4" />
+          {dueCount === 0 ? "Bạn đã ôn hết hôm nay! 🎉" : "Bắt đầu ôn tập"}
+          <ArrowRight className="w-4 h-4" />
+        </button>
+
+        <p className="text-[10px] text-center" style={{ color: "var(--muted)" }}>
+          Phím tắt: <strong>Space</strong> = lật thẻ · <strong>1-3-4-5</strong> = Again / Khó / Tốt / Dễ
+        </p>
+      </div>
+
+      <AnimatePresence>
+        {vocabOpen && (
+          <FlashcardSession
+            onClose={() => setVocabOpen(false)}
+            onMeasured={onMeasured}
+          />
+        )}
+      </AnimatePresence>
+    </>
+  );
+}
+
+// Helper: small KPI cho VocabHeroPanel
+function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+  return (
+    <div className="text-center">
+      <div
+        className="text-base sm:text-lg font-extrabold"
+        style={{ color: accent ? "var(--primary)" : "var(--foreground)" }}
+      >
+        {value}
+      </div>
+      <div
+        className="text-[10px] font-bold uppercase tracking-wider mt-0.5"
+        style={{ color: "var(--muted)" }}
+      >
+        {label}
+      </div>
     </div>
   );
 }
