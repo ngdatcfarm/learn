@@ -12,7 +12,7 @@
 | 0 | SQLite → MySQL migration (cfarm.vn) | ✅ Done 2026-06-15 | `docs/04-deploy-cfarm.md` |
 | 1 | Wire measurement API + session tracking | ✅ Done | Commit `d4a53d5` |
 | 2 | Today vs yesterday + week vs last week trends | ✅ Done | Commit `0b2d6e9` |
-| 3 | Daily goal progress bar (HS) | ⏸ Skipped | Tạm hoãn để ưu tiên Step 5/6 |
+| 3 | Daily goal progress bar (HS) | ✅ Done 2026-06-18 | Commit `6e55b64` — dùng `minutesToday` thật, extract `server/queries/engagement.ts` |
 | 4a | Backend: parent phone column + `/parent` dashboard mở rộng | ✅ Done 2026-06-15 | Commit `3f31e8d` |
 | 4b | Frontend: ParentDashboard + shared SkillCard | ✅ Done 2026-06-15 | Commit `0973169` |
 | 4c | Routing: isParent branch + isStaff rename | ✅ Done 2026-06-15 | Commit `12fa10a` |
@@ -30,6 +30,7 @@
 | 9f | SRS flashcard — SM-2 algorithm + 12 seed vocab + UI session | ✅ Done 2026-06-18 | |
 | 9g | Tab restructure (PracticeTab 4 mode) + seed 36 practice items | ✅ Done 2026-06-18 | |
 | **10a** | **Backup tự động (in-process mysqldump + gzip + rotate 7)** | ✅ **Done 2026-06-18** | xem `docs/04-deploy-cfarm.md` |
+| **10c** | **Force change password (v6 migration)** | ✅ **Done 2026-06-18** | Commit `65d4716` — `must_change_password` flag, login trả `mustChangePassword`, new `/api/auth/change-password-first` endpoint. Admin quản lý toàn bộ pass. |
 
 ---
 
@@ -101,15 +102,18 @@ fd56b29 feat: admin can manage parent-student links via EditUserModal
   - Test với 1 PH trước khi rollout
 
 ### Ưu tiên trung bình
-- **Step 3 — Daily goal progress bar (HS)** — đã skip từ lâu. Hiện `dailyGoalMinutes` đã có ở API + `DAILY_GOAL_OPTIONS` đã có ở FE; chỉ thiếu progress bar component.
-- **Force change password** sau khi admin reset — hiện user có thể giữ temp password mãi. Cần flow "đổi MK lần đầu".
 - **Step 10b+ — Upload backup lên cloud storage** (S3 / Google Drive / Backblaze B2) — hiện backup local trên server, nếu server die mất cả data. Nên off-site backup hàng tuần.
+- **Voluntary change password** — sau khi user đã đổi pass lần đầu, hiện chưa có cách tự đổi pass (chỉ admin reset). Mở `PATCH /api/me/password` (verify current + set new) cho user thường.
+- **Streak protection / nudge** — HS dễ mất streak khi quên 1 ngày. Có thể thêm "streak freeze" 1 lần/tuần, hoặc reminder notification.
 
 ### Ưu tiên thấp
 - **Step 7+**: MySQL `GET_LOCK()` cho cron multi-instance (khi scale PM2 cluster)
-- **Password reset request** — bảng `password_reset_requests` để user tự yêu cầu reset, admin duyệt
 - **Relationship dropdown** cố định (mother/father/guardian/other) thay vì free-text
 - **Bulk import users** từ CSV
+- **PH multi-class view** (hiện PH chỉ thấy từng con, không tổng hợp theo lớp)
+- **Auto-suggest PH/HS theo tên con** trong picker
+- **Lịch sử liên kết PH ↔ HS** (soft-delete + restore UI)
+- **HS bulk add vào lớp** (giống bulk PH link)
 
 ---
 
