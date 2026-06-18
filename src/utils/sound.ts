@@ -150,8 +150,13 @@ class SoundSynth {
   }
 
   // Read text using speech synthesis (TTS) - helps kids learn pronunciation!
-  speakWord(text: string) {
-    if (!this.enabled) return;
+  // Optional callbacks: onStart (utterance bắt đầu phát), onEnd (kết thúc / lỗi).
+  // Dùng cho các UI cần biết khi nào TTS đang chạy (vd: PracticeTab đổi icon play → stop).
+  speakWord(text: string, onStart?: () => void, onEnd?: () => void) {
+    if (!this.enabled) {
+      onEnd?.();
+      return;
+    }
     try {
       if ('speechSynthesis' in window) {
         window.speechSynthesis.cancel(); // Cancel any current utterances
@@ -159,10 +164,17 @@ class SoundSynth {
         utterance.lang = 'en-US'; // English speaking setting
         utterance.rate = 0.95; // Natural speed
         utterance.pitch = 1.0; // Professional friendly pitch
+        if (onStart) utterance.onstart = onStart;
+        // onend fires on cả success và cancel/error → dùng 1 handler duy nhất
+        utterance.onend = () => onEnd?.();
+        utterance.onerror = () => onEnd?.();
         window.speechSynthesis.speak(utterance);
+      } else {
+        onEnd?.();
       }
     } catch (e) {
       console.warn("TTS error:", e);
+      onEnd?.();
     }
   }
 }

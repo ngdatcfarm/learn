@@ -719,3 +719,79 @@ export async function markThreadRead(
 export async function getUnreadCount(): Promise<{ count: number }> {
   return request("GET", "/api/messages/unread-count");
 }
+
+// ============================================================
+// Practice endpoints (Step 9c) — Dictation + Speaking Prompt
+// ============================================================
+// LƯU Ý: SpeakError + SpeakAnalysisResult dưới đây PHẢI khớp với
+// server/ai.ts (canonical, có parser logic). Server là nguồn sự thật;
+// client re-declare vì FE/BE có type spaces riêng (cùng pattern với
+// LearnerSkills mapping trong App.tsx). Nếu thêm field → sửa cả 2 chỗ.
+
+export interface PracticeItem {
+  id: string;
+  template_type: "dictation" | "speaking";
+  topic: string | null;
+  level: string | null;
+  text?: string;     // dictation
+  prompt?: string;   // speaking
+}
+
+export interface DictationDiffWord {
+  word: string;
+  correct: boolean;
+}
+
+export interface DictationCheckResult {
+  ok: true;
+  score: number;
+  expected: string;
+  userInput: string;
+  diff: DictationDiffWord[];
+  correctCount: number;
+  totalCount: number;
+}
+
+export interface SpeakError {
+  type: string;
+  original: string;
+  expected: string;
+  hint: string;
+}
+
+export interface SpeakAnalysisResult {
+  errors: SpeakError[];
+  overall_score: number; // 0-10
+  encouragement: string;
+  raw_text: string;
+}
+
+export interface SpeakSubmitResult {
+  ok: true;
+  recordingId: string;
+  transcript: string;
+  confidence: "low" | "medium" | "high";
+  analysis: SpeakAnalysisResult;
+}
+
+export async function listPracticeItems(
+  type: "dictation" | "speaking"
+): Promise<{ items: PracticeItem[] }> {
+  return request("GET", `/api/practice/items?type=${type}`);
+}
+
+export async function checkDictation(
+  itemId: string,
+  userInput: string
+): Promise<DictationCheckResult> {
+  return request("POST", "/api/practice/dictation/check", { itemId, userInput });
+}
+
+export async function submitSpeak(payload: {
+  itemId: string;
+  audioUrl: string;
+  durationMs?: number;
+  mime?: string;
+}): Promise<SpeakSubmitResult> {
+  return request("POST", "/api/practice/speak/submit", payload);
+}

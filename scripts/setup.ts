@@ -34,6 +34,7 @@ import "dotenv/config";
 import { getPool, queryOne, closePool, RowDataPacket } from "../db/client";
 import { migrate } from "../db/migrate";
 import { hashPassword } from "../server/passwords";
+import { UPLOAD_DIR } from "../server/audio";
 
 // ============================================================
 // CONFIG
@@ -248,6 +249,20 @@ async function seedAdminIfNeeded(): Promise<void> {
 }
 
 // ============================================================
+// STEP 6.5: Create upload dirs (Step 9a — audio practice)
+// ============================================================
+
+function ensureUploadDirs(): void {
+  step(6.5, "Tạo upload directories (audio practice)");
+  try {
+    fs.mkdirSync(path.join(UPLOAD_DIR, "audio"), { recursive: true });
+    ok(`UPLOAD_DIR: ${UPLOAD_DIR}/audio`);
+  } catch (err: any) {
+    warn(`Không tạo được UPLOAD_DIR: ${err.message}`);
+  }
+}
+
+// ============================================================
 // STEP 7: Verify schema
 // ============================================================
 
@@ -347,6 +362,7 @@ async function main(): Promise<void> {
   await testConnection();
   await applyMigrations();
   await seedAdminIfNeeded();
+  ensureUploadDirs();
   await verifySchema();
   printNextSteps();
 }

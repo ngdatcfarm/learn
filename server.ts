@@ -31,6 +31,8 @@ import { aiRouter } from "./server/ai";
 import { adminRouter } from "./server/admin";
 import { profileRouter } from "./server/profile";
 import { messagingRouter } from "./server/messaging";
+import { audioRouter, UPLOAD_DIR } from "./server/audio";
+import { practiceRouter } from "./server/practice";
 import { registerJob, startCronJobs } from "./server/cron";
 import { runAudioCleanup } from "./server/jobs/audioCleanup";
 import { runParentReports } from "./server/jobs/parentReports";
@@ -39,6 +41,13 @@ dotenv.config();
 
 const app = express();
 const PORT = parseInt(process.env.PORT || "3000", 10);
+
+// Ensure upload dir exists at boot (idempotent)
+try {
+  fs.mkdirSync(path.join(UPLOAD_DIR, "audio"), { recursive: true });
+} catch (err) {
+  console.warn("⚠  Could not create UPLOAD_DIR/audio:", err);
+}
 
 // ============================================================
 // DB initialization (test connection + chạy migrations nếu chưa)
@@ -103,6 +112,14 @@ app.use("/api/tutor", aiRouter(ai));
 app.use("/api/admin", adminRouter);
 app.use("/api/me", profileRouter);
 app.use("/api/messages", messagingRouter);
+app.use("/api/practice/audio", audioRouter);
+app.use("/api/practice", practiceRouter(ai));
+
+// Static serve for uploaded audio files (Step 9a). Mount BEFORE Vite so dev also works.
+app.use(
+  "/uploads",
+  express.static(UPLOAD_DIR, { maxAge: "7d", fallthrough: true })
+);
 
 // ============================================================
 // Cron jobs (Step 6) — hourly tick

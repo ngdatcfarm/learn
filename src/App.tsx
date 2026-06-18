@@ -10,6 +10,7 @@ import {
   Moon,
   LayoutDashboard,
   LogOut,
+  Headphones,
 } from "lucide-react";
 import {
   UserProfile,
@@ -35,6 +36,7 @@ import {
 
 import Dashboard from "./components/Dashboard";
 import CoursesTab from "./components/CoursesTab";
+import PracticeTab from "./components/PracticeTab";
 import AILabTab from "./components/AILabTab";
 import ProfileModal from "./components/ProfileModal";
 import LoginScreen from "./components/LoginScreen";
@@ -121,7 +123,7 @@ export default function App() {
   const [user, setUser] = useState<ApiUser | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"dashboard" | "courses" | "ailab">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "courses" | "practice" | "ailab">("dashboard");
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [theme, setTheme] = useState<Theme>("dark");
@@ -373,9 +375,10 @@ export default function App() {
     }
   };
 
-  const navItems: { id: "dashboard" | "courses" | "ailab"; label: string; icon: any; emoji: string }[] = [
+  const navItems: { id: "dashboard" | "courses" | "practice" | "ailab"; label: string; icon: any; emoji: string }[] = [
     { id: "dashboard", label: "Hôm nay", icon: LayoutDashboard, emoji: "🏠" },
     { id: "courses", label: "Khóa học", icon: Layers, emoji: "📚" },
+    { id: "practice", label: "Luyện tập", icon: Headphones, emoji: "🎯" },
     { id: "ailab", label: "Chat AI", icon: Bot, emoji: "💬" },
   ];
 
@@ -549,6 +552,17 @@ export default function App() {
                   transition={{ duration: 0.2 }}
                 >
                   <CoursesTab onStartChat={() => setActiveTab("ailab")} onMeasured={refreshSkills} />
+                </motion.div>
+              )}
+              {activeTab === "practice" && (
+                <motion.div
+                  key="practice"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  <PracticeTab onMeasured={refreshSkills} />
                 </motion.div>
               )}
               {activeTab === "ailab" && (

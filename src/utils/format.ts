@@ -90,3 +90,35 @@ export function dateKey(iso: string): string {
   const d = String(date.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
 }
+
+// ============================================================
+// Score tier — dùng cho Dictation / Speaking result UI (Step 9c)
+// ============================================================
+
+export type ScoreTier = "good" | "warn" | "bad";
+
+/**
+ * Bucket 1 số điểm thành 3 tier theo threshold tuỳ ý.
+ * - score >= goodMin → "good"
+ * - score >= warnMin → "warn"
+ * - else             → "bad"
+ *
+ * Ví dụ:
+ *   scoreTier(85, 80, 50)  // → "good"  (dictation 0-100)
+ *   scoreTier(7, 7, 5)     // → "good"  (speaking 0-10, threshold 7)
+ */
+export function scoreTier(score: number, goodMin: number, warnMin: number): ScoreTier {
+  if (score >= goodMin) return "good";
+  if (score >= warnMin) return "warn";
+  return "bad";
+}
+
+/**
+ * CSS color triplet cho mỗi tier. CSS variables fallback với `var(--warning-soft)`
+ * cho --danger-soft (một số theme chưa define danger).
+ */
+export const SCORE_COLORS: Record<ScoreTier, { bg: string; border: string; fg: string }> = {
+  good: { bg: "var(--success-soft)", border: "var(--success)", fg: "var(--success)" },
+  warn: { bg: "var(--warning-soft)", border: "var(--warning)", fg: "var(--warning)" },
+  bad:  { bg: "var(--danger-soft, var(--warning-soft))", border: "var(--danger, var(--warning))", fg: "var(--danger, var(--warning))" },
+};
