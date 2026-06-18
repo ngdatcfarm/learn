@@ -308,6 +308,7 @@ function pickUserFields(body: any): {
   goal?: string | null;
   daily_goal_minutes?: number | null;
   phone?: string | null;
+  must_change_password?: number;
 } {
   const out: any = {};
   if (body.name !== undefined) out.name = String(body.name).trim();
@@ -328,6 +329,9 @@ function pickUserFields(body: any): {
       throw new Error("Số điện thoại không hợp lệ (9-15 chữ số, có thể có + ở đầu).");
     }
     out.phone = normalized === null ? null : String(normalized);
+  }
+  if (body.must_change_password !== undefined) {
+    out.must_change_password = body.must_change_password ? 1 : 0;
   }
   return out;
 }
@@ -366,15 +370,19 @@ adminRouter.post("/users", async (req: Request, res: Response) => {
 
   const id = crypto.randomUUID();
   const { hash, salt } = hashPassword(password);
+  // Default: force change password on first login. Admin có thể opt-out bằng
+  // cách gửi must_change_password=false trong body (dùng cho test/seed).
+  const mustChange = fields.must_change_password ?? 1;
   await query<ResultSetHeader>(
-    `INSERT INTO users (id, username, password_hash, password_salt, role, name,
+    `INSERT INTO users (id, username, password_hash, password_salt, must_change_password, role, name,
                         level, cefr_level, goal, daily_goal_minutes, phone)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       username,
       hash,
       salt,
+      mustChange,
       role,
       name,
       fields.level ?? null,
@@ -390,7 +398,7 @@ adminRouter.post("/users", async (req: Request, res: Response) => {
     action: "user.create",
     targetType: "user",
     targetId: id,
-    details: { username, role, name, has_phone: !!fields.phone },
+    details: { username, role, name, has_phone: !!fields.phone, must_change_password: mustChange },
     ip: req.ip,
   });
 
@@ -551,9 +559,14 @@ adminRouter.post(
 
     const temp = generateTempPassword();
     const { hash, salt } = hashPassword(temp);
+    // Set must_change_password=1 — sau khi login với temp password, user buộc
+    // phải đổi pass mới (admin có thể opt-out qua body nếu cần).
+    const mustChange = req.body?.must_change_password === false ? 0 : 1;
     await query<ResultSetHeader>(
-      "UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?",
-      [hash, salt, id]
+      `UPDATE users
+       SET password_hash = ?, password_salt = ?, must_change_password = ?
+       WHERE id = ?`,
+      [hash, salt, mustChange, id]
     );
     // Kill all sessions
     await query<ResultSetHeader>(
@@ -566,7 +579,7 @@ adminRouter.post(
       action: "user.reset_password",
       targetType: "user",
       targetId: id,
-      details: { username: existing.username, self_reset: id === admin.id },
+      details: { username: existing.username, self_reset: id === admin.id, must_change_password: mustChange },
       ip: req.ip,
     });
 

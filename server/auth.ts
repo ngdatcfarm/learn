@@ -7,6 +7,12 @@
  *   - Mọi request sau gửi `Authorization: Bearer <token>`
  *   - Server lookup token trong auth_sessions table
  *
+ * Force change password (v6):
+ *   - users.must_change_password = 1: login KHÔNG trả token, chỉ trả
+ *     { mustChangePassword: true, user } để client show "đổi pass lần đầu"
+ *   - Client gọi POST /api/auth/change-password-first với currentPassword +
+ *     newPassword → server verify current, set new hash, clear flag, issue token
+ *
  * Password: scrypt (built-in, no extra dep)
  *
  * Khác biệt với SQLite:
@@ -18,7 +24,7 @@
 import { Router, Request, Response } from "express";
 import crypto from "node:crypto";
 import { query, queryOne, RowDataPacket, ResultSetHeader } from "../db/client";
-import { hashWithSalt } from "./passwords";
+import { hashWithSalt, hashPassword } from "./passwords";
 
 const TOKEN_TTL_DAYS = 30;
 const TOKEN_TTL_MS = TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000;
@@ -34,12 +40,8 @@ export interface AuthUser {
   dailyGoalMinutes?: number;
 }
 
-function hashPassword(password: string, saltHex: string): string {
-  return hashWithSalt(password, saltHex);
-}
-
 function verifyPassword(password: string, salt: string, expectedHash: string): boolean {
-  const computed = hashPassword(password, salt);
+  const computed = hashWithSalt(password, salt);
   if (computed.length !== expectedHash.length) return false;
   return crypto.timingSafeEqual(
     Buffer.from(computed, "hex"),
@@ -76,12 +78,16 @@ interface UserRow extends RowDataPacket {
   daily_goal_minutes: number | null;
   password_hash: string;
   password_salt: string;
+  must_change_password: number;
 }
 
 /**
  * POST /api/auth/login
  * Body: { username, password }
- * Response: { token, user }
+ * Response:
+ *   - Thường:  { token, expiresAt, user }
+ *   - Force change: { mustChangePassword: true, user }  (KHÔNG trả token;
+ *     client phải gọi /api/auth/change-password-first)
  */
 authRouter.post("/login", async (req: Request, res: Response) => {
   const { username, password } = req.body || {};
@@ -91,7 +97,7 @@ authRouter.post("/login", async (req: Request, res: Response) => {
 
   const row = await queryOne<UserRow>(
     `SELECT id, username, name, role, password_hash, password_salt,
-            level, cefr_level, goal, daily_goal_minutes
+            level, cefr_level, goal, daily_goal_minutes, must_change_password
      FROM users WHERE username = ? AND deleted_at IS NULL`,
     [username]
   );
@@ -104,15 +110,82 @@ authRouter.post("/login", async (req: Request, res: Response) => {
     return res.status(401).json({ error: "Sai username hoặc password." });
   }
 
-  // Update last_login_at
+  // Update last_login_at (cả 2 nhánh: force-change và login thường đều count)
   await query<ResultSetHeader>(
     "UPDATE users SET last_login_at = NOW() WHERE id = ?",
     [row.id]
   );
 
-  const { token, expiresAt } = await issueToken(row.id);
-  const { password_hash, password_salt, ...user } = row;
+  // Nếu user phải đổi pass lần đầu → KHÔNG cấp token, bắt buộc đổi trước.
+  if (row.must_change_password === 1) {
+    const { password_hash, password_salt, must_change_password, ...user } = row;
+    return res.json({ mustChangePassword: true, user });
+  }
 
+  const { token, expiresAt } = await issueToken(row.id);
+  const { password_hash, password_salt, must_change_password, ...user } = row;
+
+  res.json({ token, expiresAt, user });
+});
+
+/**
+ * POST /api/auth/change-password-first
+ * Body: { username, currentPassword, newPassword }
+ * Chỉ dùng khi user có must_change_password=1 (login trả về mustChangePassword).
+ * Verify current password → set new hash + salt + clear flag → issue token bình thường.
+ *
+ * Response: { token, expiresAt, user }  (giống login bình thường)
+ */
+authRouter.post("/change-password-first", async (req: Request, res: Response) => {
+  const { username, currentPassword, newPassword } = req.body || {};
+  if (!username || !currentPassword || !newPassword) {
+    return res
+      .status(400)
+      .json({ error: "Thiếu username, currentPassword hoặc newPassword." });
+  }
+  if (String(newPassword).length < 4) {
+    return res
+      .status(400)
+      .json({ error: "Mật khẩu mới quá ngắn (tối thiểu 4 ký tự)." });
+  }
+  if (currentPassword === newPassword) {
+    return res
+      .status(400)
+      .json({ error: "Mật khẩu mới phải khác mật khẩu hiện tại." });
+  }
+
+  const row = await queryOne<UserRow>(
+    `SELECT id, username, name, role, password_hash, password_salt,
+            level, cefr_level, goal, daily_goal_minutes, must_change_password
+     FROM users WHERE username = ? AND deleted_at IS NULL`,
+    [username]
+  );
+
+  if (!row) {
+    return res.status(401).json({ error: "Sai username hoặc password." });
+  }
+  if (!verifyPassword(currentPassword, row.password_salt, row.password_hash)) {
+    return res.status(401).json({ error: "Mật khẩu hiện tại không đúng." });
+  }
+  if (row.must_change_password !== 1) {
+    // Không phải first-login flow → endpoint này không hợp lệ.
+    // Tránh user thường lợi dụng endpoint này để đổi pass (chưa có voluntary flow).
+    return res
+      .status(400)
+      .json({ error: "Endpoint này chỉ dùng cho lần đổi mật khẩu đầu tiên." });
+  }
+
+  const { hash, salt } = hashPassword(newPassword);
+  await query<ResultSetHeader>(
+    `UPDATE users
+     SET password_hash = ?, password_salt = ?, must_change_password = 0,
+         last_login_at = NOW()
+     WHERE id = ?`,
+    [hash, salt, row.id]
+  );
+
+  const { token, expiresAt } = await issueToken(row.id);
+  const { password_hash, password_salt, must_change_password, ...user } = row;
   res.json({ token, expiresAt, user });
 });
 

@@ -10,6 +10,7 @@
  *   - 1 parent: phuhuynh1 / ph123 (linked với nguyên)
  *
  * Idempotent: nếu data đã tồn tại → skip
+ * Mọi user seed đều có must_change_password=1 (force change on first login).
  *
  * Khác biệt với SQLite:
  * - Mọi DB call là async (await)
@@ -48,8 +49,8 @@ async function createUser(
   const id = crypto.randomUUID();
 
   await query(
-    `INSERT INTO users (id, username, password_hash, password_salt, role, name, level, cefr_level, goal, daily_goal_minutes)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO users (id, username, password_hash, password_salt, must_change_password, role, name, level, cefr_level, goal, daily_goal_minutes)
+     VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       username,
@@ -64,7 +65,7 @@ async function createUser(
     ]
   );
 
-  console.log(`  ✓ Tạo ${role}: ${username} / ${password} (${name})`);
+  console.log(`  ✓ Tạo ${role}: ${username} / ${password} (${name}) — sẽ phải đổi pass lần đầu`);
   return id;
 }
 

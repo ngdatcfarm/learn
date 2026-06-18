@@ -141,14 +141,53 @@ async function request<T>(
 // Auth endpoints
 // ============================================================
 
+/**
+ * POST /api/auth/login
+ * Trả 1 trong 2 shape:
+ *   - Bình thường:   { token, expiresAt, user }
+ *   - Force change:  { mustChangePassword: true, user }  (KHÔNG có token)
+ *
+ * Khi force change: caller PHẢI gọi changePasswordFirst(...) để nhận token
+ * thật. Helper này KHÔNG tự gọi — để UI (LoginScreen) handle flow đổi pass.
+ */
+export interface LoginResponse {
+  token?: string;
+  expiresAt?: string;
+  user: ApiUser;
+  mustChangePassword?: boolean;
+}
+
 export async function login(
   username: string,
   password: string
-): Promise<{ token: string; user: ApiUser }> {
-  const data = await request<{ token: string; user: ApiUser }>(
+): Promise<LoginResponse> {
+  const data = await request<LoginResponse>(
     "POST",
     "/api/auth/login",
     { username, password }
+  );
+  // Chỉ lưu token khi login bình thường. Force-change thì chưa có token.
+  if (data.token && data.user) {
+    setToken(data.token, data.user);
+  }
+  return data;
+}
+
+/**
+ * POST /api/auth/change-password-first
+ * Chỉ dùng sau khi login trả về mustChangePassword=true.
+ * Verify current password → set new → issue token bình thường.
+ * Set token + user vào localStorage luôn (success path).
+ */
+export async function changePasswordFirst(
+  username: string,
+  currentPassword: string,
+  newPassword: string
+): Promise<{ token: string; expiresAt: string; user: ApiUser }> {
+  const data = await request<{ token: string; expiresAt: string; user: ApiUser }>(
+    "POST",
+    "/api/auth/change-password-first",
+    { username, currentPassword, newPassword }
   );
   setToken(data.token, data.user);
   return data;

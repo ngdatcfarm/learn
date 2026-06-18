@@ -237,15 +237,15 @@ async function seedAdminIfNeeded(): Promise<void> {
   const id = crypto.randomUUID();
   const { hash, salt } = hashPassword(DEFAULT_ADMIN.password);
   await getPool().query(
-    `INSERT INTO users (id, username, password_hash, password_salt, role, name)
-     VALUES (?, ?, ?, ?, 'admin', ?)`,
+    `INSERT INTO users (id, username, password_hash, password_salt, must_change_password, role, name)
+     VALUES (?, ?, ?, ?, 1, 'admin', ?)`,
     [id, DEFAULT_ADMIN.username, hash, salt, DEFAULT_ADMIN.name]
   );
 
   ok(`Tạo admin mặc định:`);
   info(`Username: ${c.bold}${DEFAULT_ADMIN.username}${c.reset}`);
   info(`Password: ${c.bold}${DEFAULT_ADMIN.password}${c.reset}`);
-  warn("ĐỔI MẬT KHẨU NGAY sau khi deploy lên server thật!");
+  warn("Sẽ bị BẮT BUỘC đổi mật khẩu ở lần đăng nhập đầu tiên (v6).");
 }
 
 // ============================================================
