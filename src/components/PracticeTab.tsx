@@ -1,19 +1,22 @@
 /**
- * src/components/PracticeTab.tsx — Dictation + Speaking Prompt (Step 9c)
+ * src/components/PracticeTab.tsx — Dictation + Speaking + Shadowing (Step 9c + 9d)
  *
- * 2 chế độ luyện tập:
+ * 3 chế độ luyện tập:
  *   1. Dictation: HS nghe TTS + gõ lại → server word-diff + score
  *   2. Speaking: HS đọc prompt + thu âm → STT + error analysis (Step 9b)
+ *   3. Shadowing: HS nghe câu mẫu (TTS) + thu âm lặp lại → STT + word-diff vs reference
  *
  * Data flow:
- *   - Items load từ /api/practice/items?type=dictation|speaking
+ *   - Items load từ /api/practice/items?type=dictation|speaking|shadowing
  *   - Dictation: POST /api/practice/dictation/check { itemId, userInput }
  *   - Speaking: record → upload → POST /api/practice/speak/submit { itemId, audioUrl }
+ *   - Shadowing: record → upload → POST /api/practice/shadowing/check { itemId, audioUrl }
  *
  * UI:
- *   - Mode pill: "📝 Dictation" | "🎤 Speaking"
+ *   - Mode pill: "📝 Dictation" | "🎤 Speaking" | "🎧 Shadowing"
  *   - Dictation card: list item → click → TTS play + textarea + check → diff với green/red
  *   - Speaking card: list item → click → prompt + record → submit → transcript + errors + score
+ *   - Shadowing card: list item → click → TTS play reference + record → submit → diff vs reference
  *
  * Empty state: nếu items.length === 0 (fallback cũng không có) → "Chưa có bài luyện".
  * 9g sẽ seed content thật; fallback items đã có sẵn trong server/practice.ts.
@@ -41,9 +44,11 @@ import {
   PracticeItem,
   DictationCheckResult,
   SpeakSubmitResult,
+  ShadowingCheckResult,
   listPracticeItems,
   checkDictation,
   submitSpeak,
+  submitShadowing,
 } from "../api/client";
 import {
   checkMicSupport,
@@ -59,7 +64,7 @@ interface PracticeTabProps {
   onMeasured: () => Promise<void>;
 }
 
-type Mode = "dictation" | "speaking";
+type Mode = "dictation" | "speaking" | "shadowing";
 
 const levelStyle: Record<string, { bg: string; fg: string }> = {
   A1: { bg: "var(--success-soft)", fg: "var(--success)" },
@@ -113,7 +118,7 @@ export default function PracticeTab({ onMeasured }: PracticeTabProps) {
             Luyện tập
           </h2>
           <p className="text-sm mt-0.5" style={{ color: "var(--muted)" }}>
-            Dictation (nghe + gõ) và Speaking (nói + AI chấm) 🦉
+            Dictation (nghe + gõ), Speaking (nói + AI chấm), Shadowing (nghe + lặp) 🦉
           </p>
         </div>
 
@@ -144,6 +149,16 @@ export default function PracticeTab({ onMeasured }: PracticeTabProps) {
             icon={<Mic className="w-3.5 h-3.5" />}
             label="Speaking"
             emoji="🎤"
+          />
+          <ModePill
+            active={mode === "shadowing"}
+            onClick={() => {
+              sound.playClick();
+              setMode("shadowing");
+            }}
+            icon={<Headphones className="w-3.5 h-3.5" />}
+            label="Shadowing"
+            emoji="🎧"
           />
         </div>
       </div>
@@ -183,7 +198,9 @@ export default function PracticeTab({ onMeasured }: PracticeTabProps) {
               className="text-xs font-extrabold uppercase tracking-widest"
               style={{ color: "var(--muted)" }}
             >
-              {mode === "dictation" ? "Câu cần nghe" : "Đề bài nói"}
+              {mode === "dictation" ? "Câu cần nghe"
+                : mode === "speaking" ? "Đề bài nói"
+                : "Câu mẫu shadowing"}
             </h3>
             {items.map((item) => (
               <ItemCard
@@ -215,12 +232,17 @@ export default function PracticeTab({ onMeasured }: PracticeTabProps) {
                     className="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl"
                     style={{ backgroundColor: "var(--bg-soft)" }}
                   >
-                    {mode === "dictation" ? "🎧" : "🎙️"}
+                    {mode === "dictation" ? "🎧"
+                      : mode === "speaking" ? "🎙️"
+                      : "🎧"}
                   </div>
                   <div>
                     <h4 className="text-sm font-extrabold">Chọn bài để bắt đầu</h4>
                     <p className="text-xs mt-1 max-w-xs" style={{ color: "var(--muted)" }}>
-                      Nhấn vào một bài bên trái để {mode === "dictation" ? "nghe và gõ lại" : "thu âm câu trả lời"}.
+                      Nhấn vào một bài bên trái để{" "}
+                      {mode === "dictation" ? "nghe và gõ lại"
+                        : mode === "speaking" ? "thu âm câu trả lời"
+                        : "nghe câu mẫu rồi thu âm lặp lại"}.
                     </p>
                   </div>
                 </motion.div>
@@ -241,7 +263,7 @@ export default function PracticeTab({ onMeasured }: PracticeTabProps) {
                     }}
                   />
                 </motion.div>
-              ) : (
+              ) : mode === "speaking" ? (
                 <motion.div
                   key={`speak-${selectedItem.id}`}
                   initial={{ opacity: 0, y: 8 }}
@@ -249,6 +271,23 @@ export default function PracticeTab({ onMeasured }: PracticeTabProps) {
                   exit={{ opacity: 0, y: -8 }}
                 >
                   <SpeakingPanel
+                    item={selectedItem}
+                    onMeasured={onMeasured}
+                    onNext={() => {
+                      const idx = items.findIndex((i) => i.id === selectedItem.id);
+                      const next = items[(idx + 1) % items.length];
+                      setSelectedItem(next);
+                    }}
+                  />
+                </motion.div>
+              ) : (
+                <motion.div
+                  key={`shadow-${selectedItem.id}`}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                >
+                  <ShadowingPanel
                     item={selectedItem}
                     onMeasured={onMeasured}
                     onNext={() => {
@@ -355,7 +394,9 @@ function ItemCard({
         className="text-xs leading-snug line-clamp-2"
         style={{ color: "var(--foreground-soft)" }}
       >
-        {mode === "dictation" ? item.text : item.prompt}
+        {mode === "dictation" ? item.text
+          : mode === "speaking" ? item.prompt
+          : item.reference}
       </p>
     </motion.button>
   );
@@ -1026,6 +1067,405 @@ function SpeakingPanel({
                 <p className="text-xs font-extrabold mt-1">Tuyệt vời! Không có lỗi nào 🎉</p>
               </div>
             )}
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  sound.playClick();
+                  handleReset();
+                }}
+                className="flex-1 py-2.5 px-4 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 border transition-all"
+                style={{
+                  backgroundColor: "var(--bg-soft)",
+                  borderColor: "var(--border)",
+                  color: "var(--foreground-soft)",
+                }}
+              >
+                <RotateCcw className="w-3.5 h-3.5" /> Thử lại
+              </button>
+              <button
+                onClick={() => {
+                  sound.playClick();
+                  handleReset();
+                  onNext();
+                }}
+                className="flex-1 py-2.5 px-4 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all"
+                style={{
+                  backgroundColor: "var(--primary)",
+                  color: "var(--on-primary)",
+                }}
+              >
+                Bài tiếp <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// ============================================================
+// Shadowing panel (Step 9d)
+// ============================================================
+//
+// Flow: nghe TTS câu mẫu → thu âm HS lặp lại → upload + STT → word-diff vs reference.
+// Skill tracked: listen.accuracy (luyện nghe + bắt chước).
+
+function ShadowingPanel({
+  item,
+  onMeasured,
+  onNext,
+}: {
+  item: PracticeItem;
+  onMeasured: () => Promise<void>;
+  onNext: () => void;
+}) {
+  const micSupported = checkMicSupport();
+  const [playing, setPlaying] = useState(false);
+  const [recording, setRecording] = useState(false);
+  // audioUrl single-owner pattern (xem debugging.md → audioUrl ownership).
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const audioBlobRef = useRef<Blob | null>(null);
+  const [durationMs, setDurationMs] = useState(0);
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState<ShadowingCheckResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const startTimeRef = useRef<number>(0);
+
+  // Effect 1: sở hữu URL revocation. Khi audioUrl đổi (gồm set null),
+  // cleanup của effect trước chạy → revoke URL cũ. Single owner pattern.
+  useEffect(() => {
+    return () => {
+      if (audioUrl) URL.revokeObjectURL(audioUrl);
+    };
+  }, [audioUrl]);
+
+  // Effect 2: reset khi đổi item. Dừng recording, release stream, clear state.
+  // setAudioUrl(null) ở cuối trigger Effect 1 cleanup để revoke URL cũ.
+  useEffect(() => {
+    if (recorderRef.current && recorderRef.current.state !== "inactive") {
+      try { recorderRef.current.stop(); } catch { /* ignore */ }
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+    audioBlobRef.current = null;
+    setDurationMs(0);
+    setResult(null);
+    setError(null);
+    setRecording(false);
+    setPlaying(false);
+    setAudioUrl(null);
+  }, [item.id]);
+
+  const handlePlayReference = useCallback(() => {
+    if (!item.reference) return;
+    sound.speakWord(
+      item.reference,
+      () => setPlaying(true),
+      () => setPlaying(false)
+    );
+  }, [item.reference]);
+
+  const handleStartRecording = async () => {
+    if (!micSupported) {
+      setError("Trình duyệt không hỗ trợ thu âm.");
+      return;
+    }
+    setError(null);
+    try {
+      const { recorder, stream } = await startRecording();
+      recorderRef.current = recorder;
+      streamRef.current = stream;
+      makeChunkedRecorder(recorder, () => {
+        // chunks tracked in recorder._chunks
+      });
+      startTimeRef.current = Date.now();
+      setRecording(true);
+    } catch (e: any) {
+      setError(e?.message || "Không truy cập được micro.");
+    }
+  };
+
+  const handleStopRecording = async () => {
+    if (!recorderRef.current) return;
+    const elapsed = Date.now() - startTimeRef.current;
+    setDurationMs(elapsed);
+    try {
+      const blob = await stopRecording(recorderRef.current, streamRef.current || undefined);
+      audioBlobRef.current = blob;
+      setAudioUrl(URL.createObjectURL(blob));
+      setRecording(false);
+    } catch (e: any) {
+      setError(e?.message || "Dừng thu âm thất bại.");
+      setRecording(false);
+    }
+  };
+
+  const handleReset = () => {
+    if (recorderRef.current && recorderRef.current.state !== "inactive") {
+      try { recorderRef.current.stop(); } catch { /* ignore */ }
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+    audioBlobRef.current = null;
+    setRecording(false);
+    setAudioUrl(null); // triggers Effect 1 cleanup
+    setDurationMs(0);
+    setResult(null);
+    setError(null);
+  };
+
+  const handleSubmit = async () => {
+    const blob = audioBlobRef.current;
+    if (!blob) {
+      setError("Bạn chưa thu âm.");
+      return;
+    }
+    sound.playClick();
+    setSubmitting(true);
+    setError(null);
+    try {
+      const { url: uploadedUrl, mime } = await uploadAudio(blob);
+      const r = await submitShadowing({
+        itemId: item.id,
+        audioUrl: uploadedUrl,
+        durationMs,
+        mime,
+      });
+      setResult(r);
+      onMeasured().catch(() => {});
+    } catch (e: any) {
+      setError(e?.message || "Gửi thất bại.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div
+      className="p-5 rounded-3xl border space-y-4 shadow-md"
+      style={{
+        backgroundColor: "var(--bg-card)",
+        borderColor: "var(--primary)",
+      }}
+    >
+      <div className="flex justify-between items-center pb-2 border-b" style={{ borderColor: "var(--border-soft)" }}>
+        <div className="flex items-center gap-1.5">
+          <Headphones className="w-4 h-4" style={{ color: "var(--primary)" }} />
+          <span className="text-sm font-extrabold">Shadowing</span>
+        </div>
+        {item.topic && (
+          <span
+            className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+            style={{
+              backgroundColor: "var(--bg-soft)",
+              color: "var(--muted)",
+            }}
+          >
+            {item.topic} · {item.level || "A2"}
+          </span>
+        )}
+      </div>
+
+      {/* Reference + TTS */}
+      <div
+        className="p-4 rounded-2xl border space-y-2"
+        style={{ backgroundColor: "var(--bg-soft)", borderColor: "var(--border-soft)" }}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex-1">
+            <p
+              className="text-[10px] uppercase tracking-widest font-extrabold"
+              style={{ color: "var(--muted)" }}
+            >
+              Câu mẫu — nghe rồi lặp lại:
+            </p>
+            <p
+              className="text-sm leading-relaxed italic mt-1"
+              style={{ color: "var(--foreground)" }}
+            >
+              "{item.reference}"
+            </p>
+          </div>
+          <button
+            onClick={handlePlayReference}
+            className="p-3 rounded-2xl border transition-all shrink-0"
+            style={{
+              backgroundColor: playing ? "var(--primary)" : "var(--bg-elevated)",
+              borderColor: "var(--primary)",
+              color: playing ? "var(--on-primary)" : "var(--primary)",
+            }}
+            title={playing ? "Đang phát..." : "Nghe"}
+            aria-label="Phát câu mẫu"
+          >
+            {playing ? <Volume2 className="w-5 h-5 animate-pulse" /> : <Play className="w-5 h-5" />}
+          </button>
+        </div>
+      </div>
+
+      {/* Mic controls */}
+      {!micSupported ? (
+        <div
+          className="p-4 rounded-2xl border text-center space-y-2"
+          style={{
+            backgroundColor: "var(--warning-soft)",
+            borderColor: "var(--warning)",
+          }}
+        >
+          <MicOff className="w-6 h-6 mx-auto" style={{ color: "var(--warning)" }} />
+          <p className="text-xs font-extrabold">Trình duyệt không hỗ trợ micro</p>
+          <p className="text-[10px]" style={{ color: "var(--muted)" }}>
+            Hãy dùng Chrome, Edge, hoặc Safari mới nhất.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex gap-2">
+            {!recording ? (
+              <button
+                onClick={handleStartRecording}
+                disabled={!!result}
+                className="flex-1 py-3 px-4 rounded-xl text-sm font-extrabold flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                style={{
+                  backgroundColor: "var(--danger, var(--primary))",
+                  color: "var(--on-primary)",
+                }}
+              >
+                <Mic className="w-4 h-4" />
+                {audioUrl ? "Thu lại" : "Bắt đầu thu"}
+              </button>
+            ) : (
+              <button
+                onClick={handleStopRecording}
+                className="flex-1 py-3 px-4 rounded-xl text-sm font-extrabold flex items-center justify-center gap-2 transition-all animate-pulse"
+                style={{
+                  backgroundColor: "var(--danger, var(--warning))",
+                  color: "var(--on-primary, white)",
+                }}
+              >
+                <Square className="w-4 h-4" /> Dừng lại
+              </button>
+            )}
+          </div>
+
+          {audioUrl && !recording && !result && (
+            <div
+              className="p-3 rounded-2xl border space-y-2"
+              style={{ backgroundColor: "var(--bg-soft)", borderColor: "var(--border-soft)" }}
+            >
+              <p
+                className="text-[10px] font-extrabold uppercase tracking-widest"
+                style={{ color: "var(--muted)" }}
+              >
+                Bản thu của bạn ({(durationMs / 1000).toFixed(1)}s):
+              </p>
+              <audio src={audioUrl} controls className="w-full" style={{ height: 40 }} />
+            </div>
+          )}
+
+          {error && (
+            <p
+              className="text-xs text-center"
+              style={{ color: "var(--danger, var(--warning))" }}
+            >
+              {error}
+            </p>
+          )}
+
+          {!result && audioUrl && !submitting && (
+            <button
+              onClick={handleSubmit}
+              className="w-full py-3 px-4 rounded-xl text-sm font-extrabold transition-all flex items-center justify-center gap-1.5"
+              style={{
+                backgroundColor: "var(--primary)",
+                color: "var(--on-primary)",
+              }}
+            >
+              Gửi chấm <Sparkles className="w-4 h-4" />
+            </button>
+          )}
+
+          {submitting && (
+            <div
+              className="text-center text-xs py-2"
+              style={{ color: "var(--muted)" }}
+            >
+              🦉 Đang nghe AI so sánh... (có thể mất 5-10 giây)
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Result */}
+      <AnimatePresence>
+        {result && (
+          <motion.div
+            key="result"
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            className="space-y-3"
+          >
+            {(() => {
+              const colors = SCORE_COLORS[scoreTier(result.score, 80, 50)];
+              return (
+                <div
+                  className="p-4 rounded-2xl border space-y-2"
+                  style={{
+                    backgroundColor: colors.bg,
+                    borderColor: colors.border,
+                  }}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      {result.score >= 80 ? (
+                        <CheckCircle2 className="w-5 h-5" style={{ color: "var(--success)" }} />
+                      ) : (
+                        <XCircle className="w-5 h-5" style={{ color: "var(--warning)" }} />
+                      )}
+                      <span className="text-base font-extrabold">
+                        {result.correctCount}/{result.totalCount} từ đúng
+                      </span>
+                    </div>
+                    <span
+                      className="text-2xl font-extrabold"
+                      style={{ color: colors.fg }}
+                    >
+                      {result.score}%
+                    </span>
+                  </div>
+                  <div
+                    className="text-xs leading-relaxed"
+                    style={{ color: "var(--foreground-soft)" }}
+                  >
+                    {result.diff.map((d, i) => (
+                      <span
+                        key={i}
+                        className="mr-1.5 inline-block"
+                        style={{
+                          color: d.correct ? "var(--success)" : "var(--danger, var(--warning))",
+                          textDecoration: d.correct ? "none" : "line-through",
+                          fontWeight: d.correct ? 400 : 700,
+                        }}
+                      >
+                        {d.word}
+                      </span>
+                    ))}
+                  </div>
+                  <p className="text-[10px]" style={{ color: "var(--muted)" }}>
+                    Transcript: "{result.transcript || "(trống)"}"
+                  </p>
+                </div>
+              );
+            })()}
 
             <div className="flex gap-2">
               <button

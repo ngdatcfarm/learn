@@ -1,8 +1,8 @@
 /**
- * server/practice.ts — Dictation + Speaking Prompt endpoints (Step 9c)
+ * server/practice.ts — Dictation + Speaking + Shadowing endpoints (Step 9c + 9d)
  *
  * Endpoints:
- *   - GET  /api/practice/items?type=dictation|speaking
+ *   - GET  /api/practice/items?type=dictation|speaking|shadowing
  *       Trả về list practice items từ question_bank (template_type tương ứng).
  *       Nếu rỗng → fallback về FALLBACK_* arrays (cho dev/test trước khi 9g seed).
  *   - POST /api/practice/dictation/check
@@ -14,11 +14,17 @@
  *       INSERT speak_recordings (audio + transcript + analysis + expires_at=24h).
  *       Ghi skill_measurement (speak.fluency 0-100).
  *       Skip speakAnalyze nếu transcript rỗng (cost saving — Gemini trả tiền/call).
+ *   - POST /api/practice/shadowing/check (Step 9d)
+ *       Body: { itemId, audioUrl, durationMs?, mime? }
+ *       STT transcript, word-diff vs reference (cùng LCS như dictation).
+ *       INSERT speak_recordings (audio + transcript + expires_at=24h) — không cần analysis.
+ *       Ghi skill_measurement (listen.accuracy 0-100).
  *
  * Practice items:
- *   - Đọc từ question_bank (template_type='dictation'|'speaking').
- *   - Dictation content_json shape: { text: string }
- *   - Speaking content_json shape: { prompt: string }
+ *   - Đọc từ question_bank (template_type='dictation'|'speaking'|'shadowing').
+ *   - Dictation content_json shape:   { text: string }
+ *   - Speaking content_json shape:    { prompt: string }
+ *   - Shadowing content_json shape:   { reference: string }  (câu mẫu để HS nghe + lặp lại)
  *   - 9g sẽ seed content thật; hiện tại dùng fallback nếu question_bank trống.
  *
  * Transactions: mỗi endpoint wrap INSERTs trong withTransaction() để atomicity
@@ -40,7 +46,7 @@ import { assertSafeUploadUrl } from "./audio";
 interface FallbackItem {
   topic: string;
   level: string;
-  content: { text?: string; prompt?: string };
+  content: { text?: string; prompt?: string; reference?: string };
 }
 
 const FALLBACK_DICTATION: FallbackItem[] = [
@@ -57,7 +63,17 @@ const FALLBACK_SPEAKING: FallbackItem[] = [
   { topic: "Food", level: "A2", content: { prompt: "What is your favorite food? How often do you eat it?" } },
 ];
 
-function fallbackId(type: "dictation" | "speaking", item: FallbackItem): string {
+const FALLBACK_SHADOWING: FallbackItem[] = [
+  { topic: "Greeting", level: "A1", content: { reference: "Hello, my name is Anna. Nice to meet you." } },
+  { topic: "Daily life", level: "A2", content: { reference: "I usually have breakfast at seven in the morning." } },
+  { topic: "School", level: "A2", content: { reference: "My favorite subject at school is English." } },
+  { topic: "Weather", level: "B1", content: { reference: "It is sunny today, but it might rain tomorrow." } },
+];
+
+function fallbackId(
+  type: "dictation" | "speaking" | "shadowing",
+  item: FallbackItem
+): string {
   return `fallback-${type}-${item.topic.toLowerCase().replace(/\s+/g, "-")}-${item.level}`;
 }
 
@@ -67,11 +83,12 @@ function fallbackId(type: "dictation" | "speaking", item: FallbackItem): string 
 
 export interface PracticeItem {
   id: string;
-  template_type: "dictation" | "speaking";
+  template_type: "dictation" | "speaking" | "shadowing";
   topic: string | null;
   level: string | null;
-  text?: string;     // for dictation
-  prompt?: string;   // for speaking
+  text?: string;       // for dictation
+  prompt?: string;     // for speaking
+  reference?: string;  // for shadowing (câu mẫu để nghe + lặp lại)
 }
 
 export interface DictationDiffWord {
@@ -97,6 +114,18 @@ export interface SpeakSubmitResult {
   analysis: SpeakAnalysisResult;
 }
 
+export interface ShadowingCheckResult {
+  ok: true;
+  recordingId: string;
+  transcript: string;
+  confidence: "low" | "medium" | "high";
+  reference: string;
+  diff: DictationDiffWord[];
+  correctCount: number;
+  totalCount: number;
+  score: number;       // 0-100, % từ đúng
+}
+
 // ============================================================
 // Router factory
 // ============================================================
@@ -105,14 +134,14 @@ export function practiceRouter(ai: GoogleGenAI | null): Router {
   const router = Router();
 
   // ============================================================
-  // GET /api/practice/items?type=dictation|speaking
+  // GET /api/practice/items?type=dictation|speaking|shadowing
   // ============================================================
   router.get("/items", async (req: Request, res: Response) => {
     const user = await requireUser(req, res);
     if (!user) return;
     const type = String(req.query.type || "");
-    if (type !== "dictation" && type !== "speaking") {
-      return res.status(400).json({ error: 'type phải là "dictation" hoặc "speaking".' });
+    if (type !== "dictation" && type !== "speaking" && type !== "shadowing") {
+      return res.status(400).json({ error: 'type phải là "dictation", "speaking" hoặc "shadowing".' });
     }
 
     const items: PracticeItem[] = [];
@@ -134,7 +163,7 @@ export function practiceRouter(ai: GoogleGenAI | null): Router {
     );
 
     for (const r of rows) {
-      let content: { text?: string; prompt?: string } = {};
+      let content: { text?: string; prompt?: string; reference?: string } = {};
       try {
         content = JSON.parse(r.content_json) || {};
       } catch {
@@ -143,6 +172,7 @@ export function practiceRouter(ai: GoogleGenAI | null): Router {
       }
       if (type === "dictation" && !content.text) continue;
       if (type === "speaking" && !content.prompt) continue;
+      if (type === "shadowing" && !content.reference) continue;
       items.push({
         id: r.id,
         template_type: type,
@@ -150,12 +180,16 @@ export function practiceRouter(ai: GoogleGenAI | null): Router {
         level: r.level,
         text: content.text,
         prompt: content.prompt,
+        reference: content.reference,
       });
     }
 
     // 2. Fallback nếu rỗng — dùng hardcoded để dev/test
     if (items.length === 0) {
-      const fallback = type === "dictation" ? FALLBACK_DICTATION : FALLBACK_SPEAKING;
+      const fallback =
+        type === "dictation" ? FALLBACK_DICTATION
+          : type === "speaking" ? FALLBACK_SPEAKING
+          : FALLBACK_SHADOWING;
       for (const f of fallback) {
         items.push({
           id: fallbackId(type, f),
@@ -164,6 +198,7 @@ export function practiceRouter(ai: GoogleGenAI | null): Router {
           level: f.level,
           text: f.content.text,
           prompt: f.content.prompt,
+          reference: f.content.reference,
         });
       }
     }
@@ -350,6 +385,118 @@ export function practiceRouter(ai: GoogleGenAI | null): Router {
     }
   });
 
+  // ============================================================
+  // POST /api/practice/shadowing/check (Step 9d)
+  // ============================================================
+  router.post("/shadowing/check", async (req: Request, res: Response) => {
+    const user = await requireUser(req, res);
+    if (!user) return;
+    try {
+      const { itemId, audioUrl, durationMs, mime } = (req.body || {}) as {
+        itemId?: string;
+        audioUrl?: string;
+        durationMs?: number;
+        mime?: string;
+      };
+      if (!itemId || !audioUrl) {
+        return res.status(400).json({ error: "Thiếu itemId hoặc audioUrl." });
+      }
+      assertSafeUploadUrl(audioUrl);
+
+      const resolved = await resolvePracticeItem(
+        itemId,
+        user.id,
+        "shadowing",
+        FALLBACK_SHADOWING
+      );
+      if (!resolved) {
+        return res.status(404).json({ error: "Item không tồn tại." });
+      }
+      if (!resolved.reference) {
+        return res.status(400).json({ error: "Item không có reference." });
+      }
+
+      // STT (reuse 9b). Nếu transcript rỗng → score=0, diff empty.
+      const { transcript, confidence } = await transcribeFromUrl(
+        ai,
+        audioUrl,
+        mime || "audio/webm"
+      );
+
+      const expectedWords = normalizeWords(resolved.reference);
+      const gotWords = normalizeWords(transcript || "");
+      const diff = computeWordDiff(expectedWords, gotWords);
+      const correctCount = diff.filter((d) => d.correct).length;
+      const score =
+        expectedWords.length > 0
+          ? Math.round((correctCount / expectedWords.length) * 100)
+          : 0;
+
+      const recordingId = crypto.randomUUID();
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24h
+
+      // Atomic: 3 INSERT (speak_recording + skill_measurement + engagement_event).
+      // listen.accuracy vì shadowing = nghe TTS rồi lặp lại → luyện listen.
+      await withTransaction(async (conn) => {
+        await conn.execute(
+          `INSERT INTO speak_recordings
+              (id, user_id, transcript, errors_json, analysis_text, audio_url,
+               audio_duration_ms, expires_at, prompt, topic, level, created_at)
+           VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, NOW())`,
+          [
+            recordingId,
+            user.id,
+            transcript,
+            audioUrl,
+            durationMs ?? null,
+            expiresAt,
+            resolved.reference,
+            resolved.topic,
+            resolved.level,
+          ]
+        );
+        await conn.execute(
+          `INSERT INTO skill_measurements
+              (id, user_id, skill, metric, value, context_json, measured_at)
+           VALUES (?, ?, 'listen', 'accuracy', ?, ?, NOW())`,
+          [
+            crypto.randomUUID(),
+            user.id,
+            score,
+            JSON.stringify({ source: "shadowing", itemId, recordingId }),
+          ]
+        );
+        await conn.execute(
+          `INSERT INTO engagement_events
+              (id, user_id, event, value, context_json, occurred_at)
+           VALUES (?, ?, 'task_done', ?, ?, NOW())`,
+          [
+            crypto.randomUUID(),
+            user.id,
+            score,
+            JSON.stringify({ source: "shadowing", itemId, recordingId }),
+          ]
+        );
+      });
+
+      const result: ShadowingCheckResult = {
+        ok: true,
+        recordingId,
+        transcript,
+        confidence,
+        reference: resolved.reference,
+        diff,
+        correctCount,
+        totalCount: expectedWords.length,
+        score,
+      };
+      res.json(result);
+    } catch (err: any) {
+      console.error("Shadowing check error:", err);
+      res.status(500).json({ error: err.message || "Shadowing check thất bại." });
+    }
+  });
+
   return router;
 }
 
@@ -428,17 +575,24 @@ function computeWordDiff(
 }
 
 /**
- * Resolve 1 practice item (dictation | speaking) từ fallback arrays hoặc question_bank.
- * Trả về { text | prompt, level, topic } hoặc null nếu không tồn tại.
- * Merge của 2 hàm resolveDictationItem + resolveSpeakingItem cũ (Step 9c).
+ * Resolve 1 practice item (dictation | speaking | shadowing) từ fallback arrays
+ * hoặc question_bank. Trả về { text | prompt | reference, level, topic } hoặc null.
+ * Merge của 2 hàm resolveDictationItem + resolveSpeakingItem cũ (Step 9c) +
+ * shadowing (Step 9d).
  */
 async function resolvePracticeItem(
   itemId: string,
   userId: string,
-  type: "dictation" | "speaking",
+  type: "dictation" | "speaking" | "shadowing",
   fallback: FallbackItem[]
 ): Promise<
-  | { text?: string; prompt?: string; level: string; topic: string | null }
+  | {
+      text?: string;
+      prompt?: string;
+      reference?: string;
+      level: string;
+      topic: string | null;
+    }
   | null
 > {
   // 1. Fallback IDs (hardcoded)
@@ -448,6 +602,7 @@ async function resolvePracticeItem(
       return {
         text: match.content.text,
         prompt: match.content.prompt,
+        reference: match.content.reference,
         level: match.level,
         topic: match.topic,
       };
@@ -467,7 +622,7 @@ async function resolvePracticeItem(
     [itemId, type, userId]
   );
   if (!row) return null;
-  let content: { text?: string; prompt?: string } = {};
+  let content: { text?: string; prompt?: string; reference?: string } = {};
   try {
     content = JSON.parse(row.content_json) || {};
   } catch {
@@ -475,9 +630,11 @@ async function resolvePracticeItem(
   }
   if (type === "dictation" && !content.text) return null;
   if (type === "speaking" && !content.prompt) return null;
+  if (type === "shadowing" && !content.reference) return null;
   return {
     text: content.text,
     prompt: content.prompt,
+    reference: content.reference,
     level: row.level || "A2",
     topic: row.topic,
   };

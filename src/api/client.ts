@@ -721,7 +721,7 @@ export async function getUnreadCount(): Promise<{ count: number }> {
 }
 
 // ============================================================
-// Practice endpoints (Step 9c) — Dictation + Speaking Prompt
+// Practice endpoints (Step 9c + 9d) — Dictation + Speaking + Shadowing
 // ============================================================
 // LƯU Ý: SpeakError + SpeakAnalysisResult dưới đây PHẢI khớp với
 // server/ai.ts (canonical, có parser logic). Server là nguồn sự thật;
@@ -730,11 +730,12 @@ export async function getUnreadCount(): Promise<{ count: number }> {
 
 export interface PracticeItem {
   id: string;
-  template_type: "dictation" | "speaking";
+  template_type: "dictation" | "speaking" | "shadowing";
   topic: string | null;
   level: string | null;
-  text?: string;     // dictation
-  prompt?: string;   // speaking
+  text?: string;       // dictation
+  prompt?: string;     // speaking
+  reference?: string;  // shadowing (câu mẫu để nghe + lặp lại)
 }
 
 export interface DictationDiffWord {
@@ -774,8 +775,20 @@ export interface SpeakSubmitResult {
   analysis: SpeakAnalysisResult;
 }
 
+export interface ShadowingCheckResult {
+  ok: true;
+  recordingId: string;
+  transcript: string;
+  confidence: "low" | "medium" | "high";
+  reference: string;
+  diff: DictationDiffWord[];
+  correctCount: number;
+  totalCount: number;
+  score: number;       // 0-100, % từ đúng
+}
+
 export async function listPracticeItems(
-  type: "dictation" | "speaking"
+  type: "dictation" | "speaking" | "shadowing"
 ): Promise<{ items: PracticeItem[] }> {
   return request("GET", `/api/practice/items?type=${type}`);
 }
@@ -794,4 +807,13 @@ export async function submitSpeak(payload: {
   mime?: string;
 }): Promise<SpeakSubmitResult> {
   return request("POST", "/api/practice/speak/submit", payload);
+}
+
+export async function submitShadowing(payload: {
+  itemId: string;
+  audioUrl: string;
+  durationMs?: number;
+  mime?: string;
+}): Promise<ShadowingCheckResult> {
+  return request("POST", "/api/practice/shadowing/check", payload);
 }
