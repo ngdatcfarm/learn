@@ -102,7 +102,6 @@ fd56b29 feat: admin can manage parent-student links via EditUserModal
   - Test với 1 PH trước khi rollout
 
 ### Ưu tiên trung bình
-- **Step 10b+ — Upload backup lên cloud storage** (S3 / Google Drive / Backblaze B2) — hiện backup local trên server, nếu server die mất cả data. Nên off-site backup hàng tuần.
 - **Voluntary change password** — sau khi user đã đổi pass lần đầu, hiện chưa có cách tự đổi pass (chỉ admin reset). Mở `PATCH /api/me/password` (verify current + set new) cho user thường.
 - **Streak protection / nudge** — HS dễ mất streak khi quên 1 ngày. Có thể thêm "streak freeze" 1 lần/tuần, hoặc reminder notification.
 
@@ -114,6 +113,8 @@ fd56b29 feat: admin can manage parent-student links via EditUserModal
 - **Auto-suggest PH/HS theo tên con** trong picker
 - **Lịch sử liên kết PH ↔ HS** (soft-delete + restore UI)
 - **HS bulk add vào lớp** (giống bulk PH link)
+
+> Đã drop: **Off-site backup** — server thuê dịch vụ đã cam kết backup sẵn, không cần tự lo.
 
 ---
 
