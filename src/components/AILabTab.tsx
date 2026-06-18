@@ -1,3 +1,16 @@
+/**
+ * src/components/AILabTab.tsx — Free chat với bạn AI (Step 9e: voice input)
+ *
+ * Step 9e: HS có thể nói (voice) thay vì gõ (text). Mic button trong input bar:
+ *   1. Press → startRecording (MediaRecorder)
+ *   2. Release → stopRecording → blob
+ *   3. transcribeBlob(blob) → STT → transcript
+ *   4. Auto-send transcript as user message
+ *
+ * Reuse useAudioRecorder (từ 9d) + transcribeBlob (từ 9b) — không cần backend mới.
+ * Text input vẫn hoạt động song song (mic là alternative input mode).
+ */
+
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -6,12 +19,16 @@ import {
   HelpCircle,
   Languages,
   ListRestart,
-  Bot,
   Volume2,
+  Mic,
+  MicOff,
+  Square,
 } from "lucide-react";
 import { ChatMessage, UserProfile } from "../types";
 import sound from "../utils/sound";
 import { getToken, recordMeasurement, trackEvent } from "../api/client";
+import { checkMicSupport, transcribeBlob } from "../utils/audio";
+import { useAudioRecorder } from "../hooks/useAudioRecorder";
 
 interface AILabTabProps {
   profile: UserProfile;
@@ -34,6 +51,10 @@ export default function AILabTab({ profile, setProfile, onMeasured }: AILabTabPr
   const [activeAnalysis, setActiveAnalysis] = useState<{ msgId: string; type: "fix" | "suggest" | "translate" } | null>(null);
   const [analysisOutputs, setAnalysisOutputs] = useState<Record<string, string>>({});
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [transcribing, setTranscribing] = useState(false);
+  // Step 9e: voice input. Mỗi instance của AILabTab chỉ có 1 recording slot
+  // → resetKey constant. Nếu user reset chat, mic state giữ nguyên (OK).
+  const recorder = useAudioRecorder("ailab-voice");
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -180,6 +201,44 @@ export default function AILabTab({ profile, setProfile, onMeasured }: AILabTabPr
     }
   };
 
+  /**
+   * Step 9e: voice input handler.
+   * - On stop: STT qua transcribeBlob (đã có sẵn từ 9b)
+   * - Auto-send transcript như 1 user message bình thường
+   * - Hook đã tự reset state khi transcribe xong (gọi recorder.reset())
+   */
+  const handleVoiceInput = async () => {
+    if (!checkMicSupport()) {
+      setErrorMessage("Trình duyệt không hỗ trợ micro. Bạn hãy gõ tin nhắn nhé!");
+      return;
+    }
+    if (recorder.recording) {
+      // Stop + STT + auto-send
+      sound.playClick();
+      await recorder.stopRecording();
+      const blob = recorder.audioBlobRef.current;
+      recorder.reset(); // clear UI state (URL, blob) ngay
+      if (!blob) return;
+      setTranscribing(true);
+      try {
+        const { transcript } = await transcribeBlob(blob);
+        if (transcript && transcript.trim()) {
+          await handleSendMessage(transcript.trim());
+        } else {
+          setErrorMessage("Mình không nghe rõ — bạn thử nói lại nhé!");
+        }
+      } catch (e: any) {
+        setErrorMessage(e?.message || "Phiên dịch thất bại, bạn thử lại nhé!");
+      } finally {
+        setTranscribing(false);
+      }
+    } else {
+      sound.playClick();
+      setErrorMessage(null);
+      await recorder.startRecording();
+    }
+  };
+
   return (
     <div
       className="w-full max-w-4xl mx-auto flex flex-col h-[calc(100vh-160px)] min-h-[500px] rounded-3xl border overflow-hidden shadow-lg relative"
@@ -206,7 +265,7 @@ export default function AILabTab({ profile, setProfile, onMeasured }: AILabTabPr
               <span className="w-2 h-2 rounded-full pulse-dot" style={{ backgroundColor: "var(--success)" }} />
             </div>
             <p className="text-[11px] mt-0.5" style={{ color: "var(--muted)" }}>
-              Sẵn sàng giúp bạn luyện tiếng Anh ✨
+              Gõ hoặc nói — mình cùng luyện tiếng Anh nhé ✨
             </p>
           </div>
         </div>
@@ -524,12 +583,55 @@ export default function AILabTab({ profile, setProfile, onMeasured }: AILabTabPr
 
       {/* INPUT */}
       <div
-        className="p-3 border-t flex gap-2"
+        className="p-3 border-t flex gap-2 items-center"
         style={{
           backgroundColor: "var(--bg-elevated)",
           borderColor: "var(--border-soft)",
         }}
       >
+        {/* Mic button (Step 9e) — Start / Stop / Unsupported states */}
+        {checkMicSupport() ? (
+          <button
+            onClick={handleVoiceInput}
+            disabled={isTyping || transcribing}
+            title={recorder.recording ? "Dừng thu (sẽ tự gửi)" : "Nói thay vì gõ"}
+            aria-label={recorder.recording ? "Dừng thu âm" : "Bắt đầu thu âm"}
+            className="p-3 rounded-xl transition-all shrink-0 flex items-center justify-center disabled:opacity-50"
+            style={
+              recorder.recording
+                ? {
+                    backgroundColor: "var(--danger, var(--warning))",
+                    color: "var(--on-primary, white)",
+                    animation: "pulse 1.4s ease-in-out infinite",
+                  }
+                : {
+                    backgroundColor: "var(--bg-soft)",
+                    color: "var(--muted)",
+                    border: "1px solid var(--border)",
+                  }
+            }
+          >
+            {recorder.recording ? (
+              <Square className="w-4 h-4" />
+            ) : (
+              <Mic className="w-4 h-4" />
+            )}
+          </button>
+        ) : (
+          <div
+            className="p-3 rounded-xl shrink-0 flex items-center justify-center"
+            title="Trình duyệt không hỗ trợ micro"
+            style={{
+              backgroundColor: "var(--bg-soft)",
+              color: "var(--muted)",
+              border: "1px solid var(--border)",
+              opacity: 0.5,
+            }}
+          >
+            <MicOff className="w-4 h-4" />
+          </div>
+        )}
+
         <input
           type="text"
           value={inputValue}
@@ -537,8 +639,14 @@ export default function AILabTab({ profile, setProfile, onMeasured }: AILabTabPr
           onKeyDown={(e) => {
             if (e.key === "Enter") handleSendMessage();
           }}
-          placeholder="Nhập câu tiếng Anh của bạn…"
-          disabled={isTyping}
+          placeholder={
+            recorder.recording
+              ? "🎙️ Đang nghe... bấm nút vuông để dừng"
+              : transcribing
+                ? "🦉 Đang phiên dịch..."
+                : "Nhập câu tiếng Anh của bạn…"
+          }
+          disabled={isTyping || transcribing || recorder.recording}
           className="flex-grow rounded-xl px-4 py-3 text-sm transition-colors disabled:opacity-50"
           style={{
             backgroundColor: "var(--bg-soft)",
@@ -549,7 +657,7 @@ export default function AILabTab({ profile, setProfile, onMeasured }: AILabTabPr
         />
         <button
           onClick={() => handleSendMessage()}
-          disabled={!inputValue.trim() || isTyping}
+          disabled={!inputValue.trim() || isTyping || recorder.recording || transcribing}
           className="p-3 rounded-xl transition-all shrink-0 flex items-center justify-center disabled:opacity-50"
           style={{
             backgroundColor: "var(--primary)",
@@ -559,6 +667,23 @@ export default function AILabTab({ profile, setProfile, onMeasured }: AILabTabPr
           <Send className="w-4 h-4" />
         </button>
       </div>
+
+      {/* Recording indicator (Step 9e) — show elapsed time below input bar */}
+      {recorder.recording && (
+        <div
+          className="px-4 py-1.5 flex items-center justify-center gap-2 text-[11px] border-t"
+          style={{
+            backgroundColor: "var(--danger-soft, var(--warning-soft))",
+            borderColor: "var(--border-soft)",
+            color: "var(--danger, var(--warning))",
+          }}
+        >
+          <span className="w-2 h-2 rounded-full animate-pulse" style={{ backgroundColor: "var(--danger, var(--warning))" }} />
+          <span className="font-extrabold">
+            🎙️ Đang thu âm — {(recorder.durationMs / 1000).toFixed(1)}s
+          </span>
+        </div>
+      )}
     </div>
   );
 }
