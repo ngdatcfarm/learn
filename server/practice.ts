@@ -4,7 +4,6 @@
  * Endpoints:
  *   - GET  /api/practice/items?type=dictation|speaking|shadowing
  *       Trả về list practice items từ question_bank (template_type tương ứng).
- *       Nếu rỗng → fallback về FALLBACK_* arrays (cho dev/test trước khi 9g seed).
  *   - POST /api/practice/dictation/check
  *       Body: { itemId, userInput }
  *       Server-side word diff (LCS) → score 0-100 → ghi skill_measurement (write.accuracy).
@@ -25,7 +24,7 @@
  *   - Dictation content_json shape:   { text: string }
  *   - Speaking content_json shape:    { prompt: string }
  *   - Shadowing content_json shape:   { reference: string }  (câu mẫu để HS nghe + lặp lại)
- *   - 9g sẽ seed content thật; hiện tại dùng fallback nếu question_bank trống.
+ *   - 9g seed 12 items mỗi loại vào DB; resolve từ question_bank.
  *
  * Transactions: mỗi endpoint wrap INSERTs trong withTransaction() để atomicity
  * (speak_recording + skill_measurement + engagement_event hoặc cùng commit hoặc rollback).
@@ -38,44 +37,6 @@ import { requireUser } from "./auth";
 import { query, queryOne, withTransaction } from "../db/client";
 import { transcribeFromUrl, speakAnalyze, SpeakAnalysisResult } from "./ai";
 import { assertSafeUploadUrl } from "./audio";
-
-// ============================================================
-// Fallback items — dùng khi question_bank rỗng (dev/test trước khi 9g seed)
-// ============================================================
-
-interface FallbackItem {
-  topic: string;
-  level: string;
-  content: { text?: string; prompt?: string; reference?: string };
-}
-
-const FALLBACK_DICTATION: FallbackItem[] = [
-  { topic: "Daily life", level: "A2", content: { text: "The weather is nice today, so we can go to the park." } },
-  { topic: "School", level: "A2", content: { text: "I usually wake up at six in the morning." } },
-  { topic: "Travel", level: "B1", content: { text: "Have you ever visited a foreign country?" } },
-  { topic: "Food", level: "A2", content: { text: "My mother makes the best noodle soup in town." } },
-];
-
-const FALLBACK_SPEAKING: FallbackItem[] = [
-  { topic: "Hobbies", level: "A2", content: { prompt: "Describe your favorite hobby in 30-60 seconds. Why do you enjoy it?" } },
-  { topic: "Daily routine", level: "A2", content: { prompt: "Tell me about your typical weekday morning." } },
-  { topic: "Travel", level: "B1", content: { prompt: "Describe a memorable trip you have taken. Where did you go and what did you do?" } },
-  { topic: "Food", level: "A2", content: { prompt: "What is your favorite food? How often do you eat it?" } },
-];
-
-const FALLBACK_SHADOWING: FallbackItem[] = [
-  { topic: "Greeting", level: "A1", content: { reference: "Hello, my name is Anna. Nice to meet you." } },
-  { topic: "Daily life", level: "A2", content: { reference: "I usually have breakfast at seven in the morning." } },
-  { topic: "School", level: "A2", content: { reference: "My favorite subject at school is English." } },
-  { topic: "Weather", level: "B1", content: { reference: "It is sunny today, but it might rain tomorrow." } },
-];
-
-function fallbackId(
-  type: "dictation" | "speaking" | "shadowing",
-  item: FallbackItem
-): string {
-  return `fallback-${type}-${item.topic.toLowerCase().replace(/\s+/g, "-")}-${item.level}`;
-}
 
 // ============================================================
 // Public types
@@ -146,7 +107,7 @@ export function practiceRouter(ai: GoogleGenAI | null): Router {
 
     const items: PracticeItem[] = [];
 
-    // 1. Read from question_bank (shared + owned by this user)
+    // Read from question_bank (shared + owned by this user)
     const rows = await query<Array<{
       id: string;
       topic: string | null;
@@ -184,25 +145,6 @@ export function practiceRouter(ai: GoogleGenAI | null): Router {
       });
     }
 
-    // 2. Fallback nếu rỗng — dùng hardcoded để dev/test
-    if (items.length === 0) {
-      const fallback =
-        type === "dictation" ? FALLBACK_DICTATION
-          : type === "speaking" ? FALLBACK_SPEAKING
-          : FALLBACK_SHADOWING;
-      for (const f of fallback) {
-        items.push({
-          id: fallbackId(type, f),
-          template_type: type,
-          topic: f.topic,
-          level: f.level,
-          text: f.content.text,
-          prompt: f.content.prompt,
-          reference: f.content.reference,
-        });
-      }
-    }
-
     res.json({ items });
   });
 
@@ -221,12 +163,7 @@ export function practiceRouter(ai: GoogleGenAI | null): Router {
         return res.status(400).json({ error: "Thiếu itemId hoặc userInput." });
       }
 
-      const resolved = await resolvePracticeItem(
-        itemId,
-        user.id,
-        "dictation",
-        FALLBACK_DICTATION
-      );
+      const resolved = await resolvePracticeItem(itemId, user.id, "dictation");
       if (!resolved) {
         return res.status(404).json({ error: "Item không tồn tại." });
       }
@@ -288,12 +225,7 @@ export function practiceRouter(ai: GoogleGenAI | null): Router {
       // Path safety check (centralized)
       assertSafeUploadUrl(audioUrl);
 
-      const resolved = await resolvePracticeItem(
-        itemId,
-        user.id,
-        "speaking",
-        FALLBACK_SPEAKING
-      );
+      const resolved = await resolvePracticeItem(itemId, user.id, "speaking");
       if (!resolved) {
         return res.status(404).json({ error: "Item không tồn tại." });
       }
@@ -380,12 +312,7 @@ export function practiceRouter(ai: GoogleGenAI | null): Router {
       }
       assertSafeUploadUrl(audioUrl);
 
-      const resolved = await resolvePracticeItem(
-        itemId,
-        user.id,
-        "shadowing",
-        FALLBACK_SHADOWING
-      );
+      const resolved = await resolvePracticeItem(itemId, user.id, "shadowing");
       if (!resolved) {
         return res.status(404).json({ error: "Item không tồn tại." });
       }
@@ -532,16 +459,13 @@ function computeWordDiff(
 }
 
 /**
- * Resolve 1 practice item (dictation | speaking | shadowing) từ fallback arrays
- * hoặc question_bank. Trả về { text | prompt | reference, level, topic } hoặc null.
- * Merge của 2 hàm resolveDictationItem + resolveSpeakingItem cũ (Step 9c) +
- * shadowing (Step 9d).
+ * Resolve 1 practice item (dictation | speaking | shadowing) từ question_bank.
+ * Trả về { text | prompt | reference, level, topic } hoặc null.
  */
 async function resolvePracticeItem(
   itemId: string,
   userId: string,
-  type: "dictation" | "speaking" | "shadowing",
-  fallback: FallbackItem[]
+  type: "dictation" | "speaking" | "shadowing"
 ): Promise<
   | {
       text?: string;
@@ -552,21 +476,6 @@ async function resolvePracticeItem(
     }
   | null
 > {
-  // 1. Fallback IDs (hardcoded)
-  if (itemId.startsWith(`fallback-${type}-`)) {
-    const match = fallback.find((f) => fallbackId(type, f) === itemId);
-    if (match) {
-      return {
-        text: match.content.text,
-        prompt: match.content.prompt,
-        reference: match.content.reference,
-        level: match.level,
-        topic: match.topic,
-      };
-    }
-    return null;
-  }
-  // 2. question_bank (shared + owned by user)
   const row = await queryOne<{
     content_json: string;
     level: string | null;
@@ -676,3 +585,4 @@ async function recordPracticeAttempt(input: {
     );
   });
 }
+

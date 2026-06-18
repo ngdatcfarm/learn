@@ -3,27 +3,25 @@
  *
  * Idempotent: chạy nhiều lần an toàn.
  * - Tạo bảng schema_migrations nếu chưa có
- * - Split db/schema.sql thành từng statement (theo `;`)
- * - Execute từng statement qua connection pool
- * - Insert version=1 với name="initial" nếu chưa có
+ * - Split SQL file thành từng statement (theo `;`, respect strings/comments)
+ * - Execute từng statement trong 1 transaction
+ * - Insert version row nếu chưa có
  *
- * Khác biệt với SQLite:
- * - MySQL không có `db.exec()` cho multi-statement
- * - Mỗi statement phải chạy riêng qua pool.execute()
- * - Cần split SQL cẩn thận (handle strings, comments)
+ * Migration sources:
+ *   - v1 (initial): db/schema.sql (canonical full schema)
+ *   - v2+:         db/migrations/NNN_*.sql (auto-discovered, sorted by NNN)
+ *
+ * Thêm migration mới: chỉ cần tạo file db/migrations/NNN_xxx.sql (zero-padded 3 digits).
+ * KHÔNG cần sửa code này — file tự được load lần migrate kế tiếp.
  *
  * Cách dùng:
  *   npm run db:migrate
- *
- * Sau này thêm migration mới:
- *   1. Tạo file db/migrations/002_add_xxx.sql
- *   2. Tăng CURRENT_VERSION trong code dưới đây
- *   3. Thêm vào mảng MIGRATIONS
+ *   (hoặc tự động qua `npm run setup`)
  */
 
 import fs from "node:fs";
 import path from "node:path";
-import { getPool, closePool, RowDataPacket } from "./client";
+import { getPool, closePool, RowDataPacket, withTransaction } from "./client";
 
 const SCHEMA_DIR = path.join(process.cwd(), "db");
 const SCHEMA_FILE = path.join(SCHEMA_DIR, "schema.sql");
@@ -126,134 +124,61 @@ function splitSqlStatements(sql: string): string[] {
   return statements;
 }
 
-const MIGRATIONS: Migration[] = [
-  {
-    version: 1,
-    name: "initial",
-    apply: async () => {
-      const sql = fs.readFileSync(SCHEMA_FILE, "utf-8");
-      const statements = splitSqlStatements(sql);
-      const pool = getPool();
-      // Dùng connection riêng để áp dụng toàn bộ statements
-      // Nếu 1 cái fail → rollback, không apply nửa vời
-      const conn = await pool.getConnection();
-      try {
-        await conn.beginTransaction();
-        for (const stmt of statements) {
-          await conn.query(stmt);
-        }
-        await conn.commit();
-      } catch (err) {
-        await conn.rollback();
-        throw err;
-      } finally {
-        conn.release();
-      }
+/**
+ * Apply 1 SQL file trong 1 transaction (atomic — all-or-nothing).
+ * Dùng chung cho v1 (schema.sql) và v2+ (db/migrations/*.sql).
+ */
+async function applySqlFile(filePath: string): Promise<void> {
+  const sql = fs.readFileSync(filePath, "utf-8");
+  const statements = splitSqlStatements(sql);
+  await withTransaction(async (conn) => {
+    for (const stmt of statements) {
+      await conn.query(stmt);
+    }
+  });
+}
+
+/**
+ * Auto-discover migrations từ db/migrations/*.sql.
+ * Filename phải match pattern: NNN_name.sql (3-digit zero-padded).
+ * Sort lexicographic = sort by NNN (do zero-pad đều 3 chữ số).
+ *
+ * Returned migrations đã sorted theo version ASC.
+ * Nếu folder không tồn tại hoặc rỗng → chỉ trả về v1.
+ */
+function loadMigrations(): Migration[] {
+  const migrations: Migration[] = [
+    {
+      version: 1,
+      name: "initial",
+      apply: () => applySqlFile(SCHEMA_FILE),
     },
-  },
-  {
-    version: 2,
-    name: "admin_and_audio",
-    apply: async () => {
-      // Step 6: thêm 4 bảng + soft-delete column.
-      // Refactor sang directory-loader ở Step 7+ khi có ≥2 non-initial migrations.
-      const sql = fs.readFileSync(
-        path.join(MIGRATIONS_DIR, "002_admin_and_audio.sql"),
-        "utf-8"
-      );
-      const statements = splitSqlStatements(sql);
-      const conn = await getPool().getConnection();
-      try {
-        await conn.beginTransaction();
-        for (const stmt of statements) {
-          await conn.query(stmt);
-        }
-        await conn.commit();
-      } catch (err) {
-        await conn.rollback();
-        throw err;
-      } finally {
-        conn.release();
-      }
-    },
-  },
-  {
-    version: 3,
-    name: "parent_phone",
-    apply: async () => {
-      // Step 4: thêm users.phone để PH tự nhập SĐT nhận Zalo report.
-      const sql = fs.readFileSync(
-        path.join(MIGRATIONS_DIR, "003_parent_phone.sql"),
-        "utf-8"
-      );
-      const statements = splitSqlStatements(sql);
-      const conn = await getPool().getConnection();
-      try {
-        await conn.beginTransaction();
-        for (const stmt of statements) {
-          await conn.query(stmt);
-        }
-        await conn.commit();
-      } catch (err) {
-        await conn.rollback();
-        throw err;
-      } finally {
-        conn.release();
-      }
-    },
-  },
-  {
-    version: 4,
-    name: "messaging",
-    apply: async () => {
-      // Step 7: inbox nội bộ (PH ↔ GV/Admin + broadcast).
-      // 4 bảng: message_threads + thread_participants + thread_reads + messages.
-      const sql = fs.readFileSync(
-        path.join(MIGRATIONS_DIR, "004_messaging.sql"),
-        "utf-8"
-      );
-      const statements = splitSqlStatements(sql);
-      const conn = await getPool().getConnection();
-      try {
-        await conn.beginTransaction();
-        for (const stmt of statements) {
-          await conn.query(stmt);
-        }
-        await conn.commit();
-      } catch (err) {
-        await conn.rollback();
-        throw err;
-      } finally {
-        conn.release();
-      }
-    },
-  },
-  {
-    version: 5,
-    name: "flashcard_reviews",
-    apply: async () => {
-      // Step 9f: SRS flashcard — track per-user per-vocab state (SM-2).
-      const sql = fs.readFileSync(
-        path.join(MIGRATIONS_DIR, "005_flashcard_reviews.sql"),
-        "utf-8"
-      );
-      const statements = splitSqlStatements(sql);
-      const conn = await getPool().getConnection();
-      try {
-        await conn.beginTransaction();
-        for (const stmt of statements) {
-          await conn.query(stmt);
-        }
-        await conn.commit();
-      } catch (err) {
-        await conn.rollback();
-        throw err;
-      } finally {
-        conn.release();
-      }
-    },
-  },
-];
+  ];
+
+  if (!fs.existsSync(MIGRATIONS_DIR)) {
+    return migrations;
+  }
+
+  const files = fs
+    .readdirSync(MIGRATIONS_DIR)
+    .filter((f) => /^\d{3}_.+\.sql$/.test(f))
+    .sort();
+
+  for (const file of files) {
+    const match = file.match(/^(\d{3})_(.+)\.sql$/);
+    if (!match) continue; // regex bắt rồi nhưng TS cần
+    const version = parseInt(match[1], 10);
+    const name = match[2];
+    const fullPath = path.join(MIGRATIONS_DIR, file);
+    migrations.push({
+      version,
+      name,
+      apply: () => applySqlFile(fullPath),
+    });
+  }
+
+  return migrations;
+}
 
 async function ensureMigrationsTable(): Promise<void> {
   const pool = getPool();
@@ -286,10 +211,11 @@ async function applyMigration(m: Migration): Promise<void> {
 export async function migrate(): Promise<{ applied: string[]; skipped: string[] }> {
   await ensureMigrationsTable();
   const applied = await getAppliedVersions();
+  const migrations = loadMigrations();
   const justApplied: string[] = [];
   const skipped: string[] = [];
 
-  for (const m of MIGRATIONS) {
+  for (const m of migrations) {
     if (applied.has(m.version)) {
       skipped.push(`v${m.version} (${m.name})`);
     } else {
