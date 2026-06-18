@@ -228,6 +228,31 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 5,
+    name: "flashcard_reviews",
+    apply: async () => {
+      // Step 9f: SRS flashcard — track per-user per-vocab state (SM-2).
+      const sql = fs.readFileSync(
+        path.join(MIGRATIONS_DIR, "005_flashcard_reviews.sql"),
+        "utf-8"
+      );
+      const statements = splitSqlStatements(sql);
+      const conn = await getPool().getConnection();
+      try {
+        await conn.beginTransaction();
+        for (const stmt of statements) {
+          await conn.query(stmt);
+        }
+        await conn.commit();
+      } catch (err) {
+        await conn.rollback();
+        throw err;
+      } finally {
+        conn.release();
+      }
+    },
+  },
 ];
 
 async function ensureMigrationsTable(): Promise<void> {

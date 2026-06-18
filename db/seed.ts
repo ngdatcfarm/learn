@@ -192,6 +192,48 @@ async function seed(): Promise<void> {
     console.log(`  ✓ Seed 4 engagement events cho Nguyên`);
   }
 
+  // Sample flashcard vocab (Step 9f) — teacher-owned, shared to all HS
+  const existingFlashcards = await queryOne<RowDataPacket & { c: number }>(
+    "SELECT COUNT(*) AS c FROM question_bank WHERE template_type = 'flashcard'"
+  );
+  if (!existingFlashcards || existingFlashcards.c === 0) {
+    const flashcards = [
+      { topic: "Daily life", level: "A1", term: "wake up",         phonetic: "/weɪk ʌp/",          explanation: "Thức dậy",                                          example: "I wake up at 6 AM every day." },
+      { topic: "Daily life", level: "A1", term: "have breakfast",  phonetic: "/hæv ˈbrekfəst/",    explanation: "Ăn sáng",                                            example: "Do you have breakfast before school?" },
+      { topic: "School",    level: "A2", term: "homework",        phonetic: "/ˈhəʊmwɜːk/",       explanation: "Bài tập về nhà",                                     example: "I usually do my homework after dinner." },
+      { topic: "School",    level: "A2", term: "classmate",       phonetic: "/ˈklɑːsmeɪt/",      explanation: "Bạn cùng lớp",                                       example: "My classmate helps me with math." },
+      { topic: "Travel",    level: "A2", term: "passport",        phonetic: "/ˈpɑːspɔːt/",       explanation: "Hộ chiếu",                                           example: "Don't forget your passport at the airport." },
+      { topic: "Travel",    level: "A2", term: "suitcase",        phonetic: "/ˈsuːtkeɪs/",       explanation: "Vali",                                               example: "She packed her suitcase the night before." },
+      { topic: "Food",      level: "A1", term: "hungry",          phonetic: "/ˈhʌŋɡri/",         explanation: "Đói",                                                example: "I'm hungry. Can we eat now?" },
+      { topic: "Food",      level: "A2", term: "delicious",       phonetic: "/dɪˈlɪʃəs/",        explanation: "Ngon, tuyệt vời",                                     example: "This noodle soup is delicious!" },
+      { topic: "Weather",   level: "A1", term: "rainy",           phonetic: "/ˈreɪni/",          explanation: "Có mưa",                                             example: "It's rainy today, bring an umbrella." },
+      { topic: "Weather",   level: "A2", term: "stormy",          phonetic: "/ˈstɔːmi/",         explanation: "Có bão",                                             example: "The weather is stormy this weekend." },
+      { topic: "Feelings",  level: "A2", term: "excited",         phonetic: "/ɪkˈsaɪtɪd/",      explanation: "Hào hứng, phấn khích",                                example: "I'm excited about the school trip." },
+      { topic: "Feelings",  level: "A2", term: "nervous",         phonetic: "/ˈnɜːvəs/",        explanation: "Lo lắng, hồi hộp",                                   example: "She feels nervous before the speaking test." },
+    ];
+    for (const f of flashcards) {
+      await query(
+        `INSERT INTO question_bank
+            (id, owner_id, is_shared, template_type, topic, level, content_json, quality_score)
+         VALUES (?, ?, 1, 'flashcard', ?, ?, ?, ?)`,
+        [
+          crypto.randomUUID(),
+          teacherId,
+          f.topic,
+          f.level,
+          JSON.stringify({
+            term: f.term,
+            phonetic: f.phonetic,
+            explanation: f.explanation,
+            example: f.example,
+          }),
+          4.5,
+        ]
+      );
+    }
+    console.log(`  ✓ Seed ${flashcards.length} flashcard vocab (shared)`);
+  }
+
   console.log("\n✨ Seed hoàn tất!\n");
   console.log("📋 Tài khoản test:");
   console.log("   Teacher:  teacher1 / teacher123");

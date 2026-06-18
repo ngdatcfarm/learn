@@ -817,3 +817,47 @@ export async function submitShadowing(payload: {
 }): Promise<ShadowingCheckResult> {
   return request("POST", "/api/practice/shadowing/check", payload);
 }
+
+// ============================================================
+// SRS Flashcard endpoints (Step 9f) — Spaced Repetition System
+// ============================================================
+
+export interface FlashcardItem {
+  vocabId: string;
+  topic: string | null;
+  level: string | null;
+  term: string;
+  phonetic: string | null;
+  explanation: string | null;
+  example: string | null;
+  isNew: boolean;
+  review: {
+    repetitions: number;
+    easeFactor: number;
+    intervalDays: number;
+    nextReviewAt: string;
+  } | null;
+}
+
+export interface FlashcardReviewResult {
+  ok: true;
+  vocabId: string;
+  quality: number;
+  repetitions: number;
+  intervalDays: number;
+  easeFactor: number;
+  nextReviewAt: string;
+}
+
+export async function listDueFlashcards(
+  limit = 20
+): Promise<{ items: FlashcardItem[]; count: number }> {
+  return request("GET", `/api/flashcards/due?limit=${limit}`);
+}
+
+export async function reviewFlashcard(
+  vocabId: string,
+  quality: 1 | 3 | 4 | 5
+): Promise<FlashcardReviewResult> {
+  return request("POST", "/api/flashcards/review", { vocabId, quality });
+}

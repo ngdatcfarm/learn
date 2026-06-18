@@ -33,6 +33,7 @@ import { profileRouter } from "./server/profile";
 import { messagingRouter } from "./server/messaging";
 import { audioRouter, UPLOAD_DIR } from "./server/audio";
 import { practiceRouter } from "./server/practice";
+import { flashcardsRouter } from "./server/flashcards";
 import { registerJob, startCronJobs } from "./server/cron";
 import { runAudioCleanup } from "./server/jobs/audioCleanup";
 import { runParentReports } from "./server/jobs/parentReports";
@@ -114,6 +115,7 @@ app.use("/api/me", profileRouter);
 app.use("/api/messages", messagingRouter);
 app.use("/api/practice/audio", audioRouter);
 app.use("/api/practice", practiceRouter(ai));
+app.use("/api/flashcards", flashcardsRouter());
 
 // Static serve for uploaded audio files (Step 9a). Mount BEFORE Vite so dev also works.
 app.use(

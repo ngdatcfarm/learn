@@ -1,18 +1,17 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   BookOpen,
   Clock,
   ChevronRight,
-  Layers,
   BookMarked,
   Volume2,
   Sparkles,
-  ArrowRight,
 } from "lucide-react";
 import { COURSES_DATA } from "../data/coursesData";
 import sound from "../utils/sound";
-import { recordMeasurement, trackEvent } from "../api/client";
+import { recordMeasurement, trackEvent, listDueFlashcards } from "../api/client";
+import FlashcardSession from "./FlashcardSession";
 
 interface CoursesTabProps {
   onStartChat: () => void;
@@ -36,6 +35,37 @@ const categoryEmoji: Record<string, string> = {
 export default function CoursesTab({ onStartChat, onMeasured }: CoursesTabProps) {
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
   const [currentCardIndex, setCurrentCardIndex] = useState<number>(0);
+  // Step 9f: SRS session overlay
+  const [srsOpen, setSrsOpen] = useState(false);
+  const [srsDueCount, setSrsDueCount] = useState<number | null>(null);
+  // Track previous srsOpen để chỉ refresh count SAU KHI modal đóng
+  // (tránh duplicate fetch — modal cũng fetch listDueFlashcards khi mount)
+  const srsWasOpen = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await listDueFlashcards(20);
+        if (!cancelled) setSrsDueCount(res.count);
+      } catch {
+        if (!cancelled) setSrsDueCount(0);
+      }
+    };
+    // Chỉ fetch khi:
+    //  - initial mount (srsWasOpen.current === false && srsOpen === false)
+    //  - modal vừa đóng (srsWasOpen.current === true && srsOpen === false)
+    const justClosed = srsWasOpen.current && !srsOpen;
+    if (!srsOpen || justClosed) {
+      srsWasOpen.current = srsOpen;
+      load();
+    } else {
+      srsWasOpen.current = srsOpen;
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [srsOpen]);
 
   const activeCourse = COURSES_DATA.find((c) => c.id === selectedCourseId);
 
@@ -218,6 +248,42 @@ export default function CoursesTab({ onStartChat, onMeasured }: CoursesTabProps)
 
         {/* FLASHCARD SIDEBAR */}
         <div className="space-y-4">
+          {/* Step 9f: SRS entry point — luôn hiện ở top */}
+          <button
+            onClick={() => {
+              sound.playClick();
+              setSrsOpen(true);
+            }}
+            className="w-full p-4 rounded-2xl border-2 flex items-center justify-between gap-3 transition-all hover:scale-[1.02] active:scale-[0.98]"
+            style={{
+              backgroundColor: "var(--primary-soft)",
+              borderColor: "var(--primary)",
+            }}
+          >
+            <div className="flex items-center gap-3">
+              <div
+                className="w-10 h-10 rounded-xl flex items-center justify-center text-2xl"
+                style={{ backgroundColor: "var(--primary)", color: "var(--on-primary)" }}
+              >
+                🎴
+              </div>
+              <div className="text-left">
+                <div className="text-sm font-extrabold">Luyện SRS</div>
+                <div
+                  className="text-[10px] font-bold"
+                  style={{ color: "var(--muted)" }}
+                >
+                  {srsDueCount === null
+                    ? "Đang tải..."
+                    : srsDueCount > 0
+                    ? `${srsDueCount} thẻ đến hạn`
+                    : "Bạn đã ôn hết hôm nay! 🎉"}
+                </div>
+              </div>
+            </div>
+            <ChevronRight className="w-5 h-5" style={{ color: "var(--primary)" }} />
+          </button>
+
           <AnimatePresence mode="wait">
             {!selectedCourseId ? (
               <motion.div
@@ -367,6 +433,16 @@ export default function CoursesTab({ onStartChat, onMeasured }: CoursesTabProps)
           </AnimatePresence>
         </div>
       </div>
+
+      {/* Step 9f: SRS flashcard session modal */}
+      <AnimatePresence>
+        {srsOpen && (
+          <FlashcardSession
+            onClose={() => setSrsOpen(false)}
+            onMeasured={onMeasured}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
