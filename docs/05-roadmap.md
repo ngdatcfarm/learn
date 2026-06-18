@@ -1,6 +1,6 @@
 # Roadmap & Tiến độ dự án `thaoenglish/learn`
 
-> Cập nhật lần cuối: 2026-06-18
+> Cập nhật lần cuối: 2026-06-18 (thêm Step 11)
 > Mục đích: Theo dõi các Step đã chốt, đang làm, và sắp tới — để mỗi lần quay lại trao đổi đều biết kế hoạch tới đâu.
 
 ---
@@ -31,6 +31,7 @@
 | 9g | Tab restructure (PracticeTab 4 mode) + seed 36 practice items | ✅ Done 2026-06-18 | |
 | **10a** | **Backup tự động (in-process mysqldump + gzip + rotate 7)** | ✅ **Done 2026-06-18** | xem `docs/04-deploy-cfarm.md` |
 | **10c** | **Force change password (v6 migration)** | ✅ **Done 2026-06-18** | Commit `65d4716` — `must_change_password` flag, login trả `mustChangePassword`, new `/api/auth/change-password-first` endpoint. Admin quản lý toàn bộ pass. |
+| **11** | **Streak protection + daily nudge (v7 migration)** | ✅ **Done 2026-06-18** | Commit `b16cc7b` — 2 cron jobs: `streak_freeze` (00:05 auto-apply) + `streakNudge` (19:00 gửi inbox cho PH+GV). `computeEngagement` consult `streak_freezes` để streak không gap khi auto-freeze. Bug fixes: drop `subject` field trên direct-thread INSERT + fix timezone mismatch UTC↔local. Refactor: extract `sendDirectMessage` (messaging.ts) + `isInTimeWindow/formatDateLocal` (`server/utils/time.ts`). Xem `step11-streak-protection.md`. |
 
 ---
 
@@ -103,7 +104,6 @@ fd56b29 feat: admin can manage parent-student links via EditUserModal
 
 ### Ưu tiên trung bình
 - **Voluntary change password** — sau khi user đã đổi pass lần đầu, hiện chưa có cách tự đổi pass (chỉ admin reset). Mở `PATCH /api/me/password` (verify current + set new) cho user thường.
-- **Streak protection / nudge** — HS dễ mất streak khi quên 1 ngày. Có thể thêm "streak freeze" 1 lần/tuần, hoặc reminder notification.
 
 ### Ưu tiên thấp
 - **Step 7+**: MySQL `GET_LOCK()` cho cron multi-instance (khi scale PM2 cluster)
