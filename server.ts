@@ -17,6 +17,7 @@ import express, { Request, Response, NextFunction } from "express";
 import "express-async-errors"; // MUST be imported AFTER express, BEFORE any routers — patches Express 4 to catch async errors
 import path from "node:path";
 import fs from "node:fs";
+import http from "node:http";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
@@ -35,6 +36,8 @@ import { audioRouter, UPLOAD_DIR } from "./server/audio";
 import { practiceRouter } from "./server/practice";
 import { flashcardsRouter } from "./server/flashcards";
 import { liveHelpRouter } from "./server/liveHelp";
+import { initSocketIO } from "./server/socket";
+import { initLiveHelpSocket } from "./server/liveHelpSocket";
 import { registerJob, startCronJobs } from "./server/cron";
 import { runAudioCleanup } from "./server/jobs/audioCleanup";
 import { runParentReports } from "./server/jobs/parentReports";
@@ -176,7 +179,12 @@ async function startServer() {
     console.log("✓ Serving static dist/");
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  // Wrap Express app trong http.Server để attach Socket.IO (Step 12b)
+  const httpServer = http.createServer(app);
+  initSocketIO(httpServer);
+  initLiveHelpSocket(); // /live-help namespace
+
+  httpServer.listen(PORT, "0.0.0.0", () => {
     console.log(`\n🚀 Server running on http://0.0.0.0:${PORT}`);
     console.log(`   Health: http://localhost:${PORT}/api/health\n`);
   });

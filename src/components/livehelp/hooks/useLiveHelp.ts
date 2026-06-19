@@ -32,6 +32,8 @@ export interface UseLiveHelpReturn {
   sendHint: (message: string) => Promise<void>;
   /** End active session. */
   endSession: (outcome?: LiveHelpOutcome) => Promise<void>;
+  /** Append 1 message realtime (từ socket). Dedup theo id. */
+  appendMessage: (msg: LiveHelpHintMessage) => void;
   /** Reload cả session list + messages (vd: sau khi tạo session mới). */
   refresh: () => Promise<void>;
   /** Stop polling (khi modal đóng). */
@@ -68,6 +70,10 @@ export function useLiveHelp(autoStart = true): UseLiveHelpReturn {
     } catch (e: any) {
       console.warn("[useLiveHelp] loadMessages failed:", e);
     }
+  }, []);
+
+  const appendMessage = useCallback((msg: LiveHelpHintMessage) => {
+    setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
   }, []);
 
   const refresh = useCallback(async () => {
@@ -149,6 +155,7 @@ export function useLiveHelp(autoStart = true): UseLiveHelpReturn {
     error,
     sendHint,
     endSession,
+    appendMessage,
     refresh,
     stopPolling,
     startPolling,

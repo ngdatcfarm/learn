@@ -42,6 +42,7 @@ import {
 import { requireRole, AuthUser } from "./auth";
 import { logAudit } from "./audit";
 import { sendDirectMessage } from "./messaging";
+import { emitToRoom } from "./socket";
 
 export const liveHelpRouter = Router();
 
@@ -409,6 +410,17 @@ liveHelpRouter.post("/:id/hint", async (req: Request, res: Response) => {
     ip: req.ip,
   });
 
+  // Realtime: broadcast hint tới socket room (HS/teacher nhận ngay, không đợi poll 3s)
+  emitToRoom("/live-help", `session:${session.id}`, "hint:new", {
+    id: hintId,
+    session_id: session.id,
+    sender_id: user.id,
+    sender_name: user.name,
+    sender_role: user.role,
+    message,
+    created_at: now,
+  });
+
   res.json({ ok: true, hint_id: hintId });
 });
 
@@ -470,6 +482,13 @@ liveHelpRouter.post("/:id/end", async (req: Request, res: Response) => {
     targetId: session.id,
     details: { outcome, ended_by_role: user.role },
     ip: req.ip,
+  });
+
+  // Realtime: broadcast session end → clients tự đóng UI (không đợi poll 3s)
+  emitToRoom("/live-help", `session:${session.id}`, "session:ended", {
+    session_id: session.id,
+    outcome,
+    ended_by_role: user.role,
   });
 
   res.json({ ok: true });
@@ -545,4 +564,90 @@ liveHelpRouter.get("/:id/messages", async (req: Request, res: Response) => {
   );
 
   res.json({ messages, count: messages.length });
+});
+
+/**
+ * POST /api/live/help/:id/highlight
+ * Teacher tạo 1 highlight cho HS trong session.
+ * Body: { selector: string, note?: string|null, color?: string }
+ * Persists to live_help_highlights + emit `highlight:show` cho HS.
+ *
+ * Slice B: thay thế highlight qua socket — REST để persist reliably.
+ */
+liveHelpRouter.post("/:id/highlight", async (req: Request, res: Response) => {
+  const teacher = await requireRole(req, res, ["teacher"]);
+  if (!teacher) return;
+
+  const access = await verifySessionAccess(req.params.id, teacher);
+  if (access.ok === false) {
+    return res.status(access.status).json({ error: access.error });
+  }
+
+  const { selector, note, color } = req.body ?? {};
+  if (typeof selector !== "string" || selector.trim().length === 0) {
+    return res.status(400).json({ error: "selector là bắt buộc." });
+  }
+  if (selector.length > 255) {
+    return res.status(400).json({ error: "selector tối đa 255 ký tự." });
+  }
+  const safeColor = typeof color === "string" && color.length > 0 && color.length <= 16
+    ? color
+    : "yellow";
+  const safeNote = typeof note === "string" && note.trim().length > 0
+    ? note.trim().slice(0, 500)
+    : null;
+
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString().slice(0, 19).replace("T", " ");
+  await query<ResultSetHeader>(
+    `INSERT INTO live_help_highlights
+       (id, session_id, teacher_id, selector, color, note, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [id, req.params.id, teacher.id, selector.trim(), safeColor, safeNote, now]
+  );
+
+  const eventPayload = {
+    id,
+    session_id: req.params.id,
+    teacher_id: teacher.id,
+    selector: selector.trim(),
+    color: safeColor,
+    note: safeNote,
+    created_at: new Date().toISOString(),
+  };
+
+  // Realtime: broadcast highlight cho HS
+  emitToRoom("/live-help", `session:${req.params.id}`, "highlight:show", eventPayload);
+
+  await logAudit({
+    actorId: teacher.id,
+    action: "live_help.highlight",
+    targetType: "live_help_session",
+    targetId: req.params.id,
+    details: { highlight_id: id, selector_length: selector.length, has_note: safeNote !== null },
+    ip: req.ip,
+  });
+
+  res.json({ ok: true, highlight: eventPayload });
+});
+
+/**
+ * POST /api/live/help/:id/highlight/clear
+ * Teacher xoá highlight hiện tại trong session.
+ * Emit `highlight:clear` cho HS.
+ */
+liveHelpRouter.post("/:id/highlight/clear", async (req: Request, res: Response) => {
+  const teacher = await requireRole(req, res, ["teacher"]);
+  if (!teacher) return;
+
+  const access = await verifySessionAccess(req.params.id, teacher);
+  if (access.ok === false) {
+    return res.status(access.status).json({ error: access.error });
+  }
+
+  emitToRoom("/live-help", `session:${req.params.id}`, "highlight:clear", {
+    session_id: req.params.id,
+  });
+
+  res.json({ ok: true });
 });

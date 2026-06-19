@@ -8,11 +8,12 @@
  *  - Button "Kết thúc" thay vì "Tôi hiểu rồi"
  *  - Quick-reply buttons (3 snippet gợi ý nhanh)
  *
- * Polling 3s khi mount. Slice B sẽ chuyển sang socket realtime.
+ * Slice B: socket realtime cho hint + session:ended.
+ *          Highlight UI: selector + note inputs → sendHighlight / clearHighlight.
  */
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Send, X, Loader2, MessageCircle } from "lucide-react";
+import { Send, X, Loader2, MessageCircle, Highlighter, Eraser } from "lucide-react";
 import { motion } from "motion/react";
 import { Field, inputStyle, inputClass } from "../ui/Field";
 import {
@@ -23,6 +24,7 @@ import {
   type LiveHelpHintMessage,
   type LiveHelpOutcome,
 } from "../../api/client";
+import { useLiveHelpSocket } from "./hooks/useLiveHelpSocket";
 
 const POLL_MS = 3000;
 
@@ -44,6 +46,9 @@ export function TeacherLiveHelpPane({ session, onClose, onEnded }: TeacherLiveHe
   const [sending, setSending] = useState(false);
   const [ending, setEnding] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [hlSelector, setHlSelector] = useState("");
+  const [hlNote, setHlNote] = useState("");
+  const [hlSending, setHlSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const loadMessages = async () => {
@@ -57,12 +62,37 @@ export function TeacherLiveHelpPane({ session, onClose, onEnded }: TeacherLiveHe
     }
   };
 
-  // Initial load + polling
+  const appendMessage = (msg: LiveHelpHintMessage) => {
+    setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
+  };
+
+  // Initial load + polling fallback
   useEffect(() => {
     loadMessages();
     const tick = setInterval(loadMessages, POLL_MS);
     return () => clearInterval(tick);
   }, [session.id]);
+
+  // Realtime socket
+  useLiveHelpSocket({
+    sessionId: session.id,
+    onHint: (h) => {
+      appendMessage({
+        id: h.id,
+        session_id: h.session_id,
+        sender_id: h.sender_id,
+        sender_name: h.sender_name,
+        sender_role: h.sender_role,
+        message: h.message,
+        created_at: h.created_at,
+      });
+    },
+    onSessionEnded: () => {
+      // HS hoặc ai đó end session → đóng pane
+      onEnded?.();
+      onClose();
+    },
+  });
 
   // Auto-scroll on new messages
   useEffect(() => {
@@ -75,7 +105,7 @@ export function TeacherLiveHelpPane({ session, onClose, onEnded }: TeacherLiveHe
     try {
       await liveHelpSendHint(session.id, text);
       setDraft("");
-      await loadMessages();
+      // Không cần loadMessages ngay: socket sẽ append
     } catch (e) {
       console.error("[TeacherLiveHelpPane] sendHint failed:", e);
     } finally {
@@ -86,6 +116,44 @@ export function TeacherLiveHelpPane({ session, onClose, onEnded }: TeacherLiveHe
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     submitHint(draft);
+  };
+
+  const handleSendHighlight = async () => {
+    if (!hlSelector.trim() || hlSending) return;
+    setHlSending(true);
+    try {
+      // Lưu DB qua REST để persist (server sẽ emit highlight:show kèm id)
+      await fetch(`/api/live/help/${session.id}/highlight`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("apex_auth_token") ?? ""}`,
+        },
+        body: JSON.stringify({
+          selector: hlSelector.trim(),
+          note: hlNote.trim() || null,
+        }),
+      });
+      setHlNote("");
+      // Không clear selector — GV có thể muốn dùng lại
+    } catch (e) {
+      console.error("[TeacherLiveHelpPane] highlight failed:", e);
+    } finally {
+      setHlSending(false);
+    }
+  };
+
+  const handleClearHighlight = async () => {
+    try {
+      await fetch(`/api/live/help/${session.id}/highlight/clear`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("apex_auth_token") ?? ""}`,
+        },
+      });
+    } catch (e) {
+      console.error("[TeacherLiveHelpPane] clear highlight failed:", e);
+    }
   };
 
   const handleEnd = async (outcome: LiveHelpOutcome) => {
@@ -187,6 +255,59 @@ export function TeacherLiveHelpPane({ session, onClose, onEnded }: TeacherLiveHe
               {qr.slice(0, 28)}...
             </button>
           ))}
+        </div>
+      )}
+
+      {/* Highlight controls (Slice B) */}
+      {session.status !== "ended" && (
+        <div
+          className="px-3 py-2 border-t space-y-1.5"
+          style={{ borderColor: "var(--border-soft)", backgroundColor: "var(--bg-soft)" }}
+        >
+          <div className="flex items-center gap-1 text-[10px] font-extrabold" style={{ color: "var(--muted-strong)" }}>
+            <Highlighter className="w-3 h-3" />
+            Highlight cho HS
+          </div>
+          <div className="flex gap-1.5">
+            <input
+              type="text"
+              className={inputClass()}
+              style={{ ...inputStyle, fontSize: 11, padding: "4px 8px" }}
+              value={hlSelector}
+              onChange={(e) => setHlSelector(e.target.value)}
+              placeholder="Selector (vd: .question-text)"
+              maxLength={255}
+            />
+            <input
+              type="text"
+              className={inputClass()}
+              style={{ ...inputStyle, fontSize: 11, padding: "4px 8px" }}
+              value={hlNote}
+              onChange={(e) => setHlNote(e.target.value)}
+              placeholder="Ghi chú"
+              maxLength={500}
+            />
+          </div>
+          <div className="flex gap-1.5">
+            <button
+              onClick={handleSendHighlight}
+              disabled={!hlSelector.trim() || hlSending}
+              className="flex-1 px-2 py-1 rounded-lg text-[10px] font-extrabold disabled:opacity-50"
+              style={{ backgroundColor: "#facc15", color: "#713f12" }}
+            >
+              <Highlighter className="w-3 h-3 inline mr-1" />
+              Gửi highlight
+            </button>
+            <button
+              onClick={handleClearHighlight}
+              className="px-2 py-1 rounded-lg text-[10px] font-extrabold"
+              style={{ backgroundColor: "var(--bg-card)", color: "var(--muted-strong)" }}
+              title="Xoá highlight hiện tại"
+            >
+              <Eraser className="w-3 h-3 inline mr-1" />
+              Xoá
+            </button>
+          </div>
         </div>
       )}
 
