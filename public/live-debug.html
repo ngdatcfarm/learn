@@ -81,6 +81,7 @@
       <div class="row">
         <label>Session</label>
         <input id="caller-session" placeholder="session UUID" />
+        <button onclick="autoFillSession('caller')">📋 lấy từ API</button>
       </div>
       <div class="row">
         <label>Status</label>
@@ -106,6 +107,7 @@
       <div class="row">
         <label>Session</label>
         <input id="callee-session" placeholder="session UUID (same as caller)" />
+        <button onclick="autoFillSession('callee')">📋 lấy từ API</button>
       </div>
       <div class="row">
         <label>Status</label>
@@ -273,6 +275,36 @@
   // Expose remaining functions to window for onclick handlers
   window.prefillCaller = prefillCaller;
   window.prefillCallee = prefillCallee;
+
+  /**
+   * Auto-fill sessionId từ API.
+   * - HS: GET /api/live/help/mine → lấy session active/pending đầu tiên
+   * - GV: GET /api/live/help/queue → lấy session active/pending đầu tiên
+   */
+  window.autoFillSession = async function (side) {
+    const token = document.getElementById(side + '-token').value.trim();
+    if (!token) { alert('paste token trước'); return; }
+    // Thử cả 2 endpoint (HS hoặc GV đều có quyền 1 trong 2)
+    const endpoints = ['/api/live/help/mine', '/api/live/help/queue'];
+    let found = null;
+    for (const ep of endpoints) {
+      try {
+        const r = await fetch(ep, { headers: { 'Authorization': 'Bearer ' + token } });
+        if (!r.ok) continue;
+        const data = await r.json();
+        const active = (data.sessions || []).find(s => s.status === 'active' || s.status === 'pending');
+        if (active) { found = active.id; break; }
+      } catch (e) {
+        // ignore
+      }
+    }
+    if (found) {
+      document.getElementById(side + '-session').value = found;
+      log(side, '✓ auto-filled sessionId=' + found, 'in');
+    } else {
+      log(side, '⚠ không tìm thấy session active/pending. HS phải bấm "🆘 Cần hỗ trợ" trước.', 'err');
+    }
+  };
 })();
 </script>
 </body>
