@@ -106,13 +106,12 @@ fd56b29 feat: admin can manage parent-student links via EditUserModal
   - Test với 1 PH trước khi rollout
 
 ### Ưu tiên trung bình
-- *(hiện trống — bulk import CSV + 4 polish items đã done)*
+- *(hiện trống — bulk import users + classes + 4 polish items đã done)*
 
 ### Ưu tiên thấp
 - **Step 7+**: MySQL `GET_LOCK()` cho cron multi-instance (khi scale PM2 cluster)
 - **PH multi-class view** (hiện PH chỉ thấy từng con, không tổng hợp theo lớp)
 - **Lịch sử liên kết PH ↔ HS** (soft-delete + restore UI)
-- **Bulk import classes + class_members** qua CSV (tương tự Step 10e nhưng cho lớp)
 
 > Đã drop: **Off-site backup** — server thuê dịch vụ đã cam kết backup sẵn, không cần tự lo.
 
