@@ -669,6 +669,23 @@ export async function adminAddClassMember(
   return request("POST", `/api/admin/classes/${classId}/members`, { student_id: studentId });
 }
 
+/**
+ * Bulk add students vào lớp qua CSV (1 cột: username).
+ * Trả về { requested, added, skipped, errors[] }.
+ */
+export async function adminBulkAddClassMembers(
+  classId: string,
+  csv: string
+): Promise<{
+  ok: true;
+  requested: number;
+  added: number;
+  skipped: number;
+  errors: { row: number; username: string; error: string }[];
+}> {
+  return request("POST", `/api/admin/classes/${classId}/members/bulk`, { csv });
+}
+
 export async function adminRemoveClassMember(
   classId: string,
   studentId: string

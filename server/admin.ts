@@ -1191,6 +1191,117 @@ adminRouter.delete(
   }
 );
 
+/**
+ * Bulk add students vào lớp qua CSV (1 cột: username).
+ * Partial success: bỏ qua username không tồn tại / không phải HS / đã trong lớp.
+ * Trả về { added, skipped, errors[] } để admin biết kết quả từng dòng.
+ *
+ * Body: { csv: "username\nnguyen\nan\n..." }
+ * Ví dụ:
+ *   username
+ *   nguyen
+ *   an
+ *   binh
+ */
+adminRouter.post("/classes/:id/members/bulk", async (req: Request, res: Response) => {
+  const admin = await requireRole(req, res, ["admin"]);
+  if (!admin) return;
+  const classId = req.params.id;
+  const { csv } = req.body || {};
+  if (!csv || typeof csv !== "string") {
+    return res.status(400).json({ error: "Thiếu CSV body." });
+  }
+  if (Buffer.byteLength(csv, "utf8") > MAX_CSV_BYTES) {
+    return res.status(413).json({ error: `CSV quá lớn (>${MAX_CSV_BYTES / 1024 / 1024} MB).` });
+  }
+
+  const cls = await queryOne("SELECT id FROM classes WHERE id = ?", [classId]);
+  if (!cls) return res.status(404).json({ error: "Lớp không tồn tại." });
+
+  const rows = parseCsv(csv);
+  if (rows.length < 2) {
+    return res.status(400).json({ error: "CSV phải có header + ít nhất 1 dòng dữ liệu." });
+  }
+  const headers = rows[0].map(normalizeHeader);
+  const iUser = headers.indexOf("username");
+  if (iUser === -1) {
+    return res.status(400).json({
+      error: `CSV thiếu cột "username". Cột hiện có: ${headers.join(", ")}`,
+    });
+  }
+
+  // Thu thập username duy nhất + report duplicate trong file
+  const seen = new Set<string>();
+  const usernames: string[] = [];
+  const errors: { row: number; username: string; error: string }[] = [];
+  for (let r = 1; r < rows.length; r++) {
+    const u = (rows[r][iUser] || "").trim();
+    if (!u) continue; // bỏ dòng trống
+    if (seen.has(u)) {
+      errors.push({ row: r + 1, username: u, error: "Trùng username trong file." });
+      continue;
+    }
+    seen.add(u);
+    usernames.push(u);
+  }
+
+  // Lookup users theo batch
+  const found = await query<RowDataPacket[]>(
+    `SELECT id, username, name FROM users
+     WHERE username IN (${usernames.map(() => "?").join(",")})
+       AND role='student' AND deleted_at IS NULL`,
+    usernames
+  );
+  const byUsername = new Map(found.map((u) => [u.username as string, u]));
+
+  // Build ID list, gom errors cho missing/wrong role
+  const studentIds: string[] = [];
+  for (const u of usernames) {
+    const row = byUsername.get(u);
+    if (!row) {
+      errors.push({ row: 0, username: u, error: "Username không tồn tại hoặc không phải HS." });
+    } else {
+      studentIds.push(row.id as string);
+    }
+  }
+
+  // Atomic bulk INSERT IGNORE (bỏ qua nếu đã trong lớp)
+  let added = 0;
+  if (studentIds.length > 0) {
+    await withTransaction(async (conn) => {
+      for (let i = 0; i < studentIds.length; i += BULK_INSERT_CHUNK) {
+        const chunk = studentIds.slice(i, i + BULK_INSERT_CHUNK);
+        const placeholders = chunk.map(() => "(?,?)").join(",");
+        const params: any[] = [];
+        for (const sid of chunk) params.push(classId, sid);
+        const [result] = await conn.query<ResultSetHeader>(
+          `INSERT IGNORE INTO class_members (class_id, student_id) VALUES ${placeholders}`,
+          params
+        );
+        added += result.affectedRows;
+      }
+    });
+  }
+  const skipped = usernames.length - added - errors.length;
+
+  await logAudit({
+    actorId: admin.id,
+    action: "class.bulk_add_members",
+    targetType: "class",
+    targetId: classId,
+    details: { requested: usernames.length, added, skipped, error_count: errors.length },
+    ip: req.ip,
+  });
+
+  res.json({
+    ok: true,
+    requested: usernames.length,
+    added,
+    skipped,
+    errors,
+  });
+});
+
 // ============================================================
 // ZALO SETTINGS
 // ============================================================

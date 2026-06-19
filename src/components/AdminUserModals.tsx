@@ -14,6 +14,7 @@ import {
   adminListUsers,
   adminGetClassMembers,
   adminAddClassMember,
+  adminBulkAddClassMembers,
   adminRemoveClassMember,
   adminGetUser,
   adminAddParentLink,
@@ -1120,6 +1121,15 @@ export function ManageMembersModal({
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [pickerOpen, setPickerOpen] = useState(false);
+  // Bulk add mode: thay search input bằng textarea paste CSV
+  const [bulkMode, setBulkMode] = useState(false);
+  const [bulkCsv, setBulkCsv] = useState("");
+  const [bulkResult, setBulkResult] = useState<{
+    requested: number;
+    added: number;
+    skipped: number;
+    errors: { row: number; username: string; error: string }[];
+  } | null>(null);
 
   // Load members: chỉ khi class đổi (search không liên quan)
   useEffect(() => {
@@ -1183,6 +1193,35 @@ export function ManageMembersModal({
     }
   };
 
+  const handleBulkAdd = async () => {
+    const csv = bulkCsv.trim();
+    if (!csv) return;
+    // Build minimal CSV nếu user chỉ paste plain text (newline-separated usernames).
+    // Detect bằng cách check dòng đầu: nếu không có dấu phẩy → wrap vào "username\n...".
+    const firstLine = csv.split(/\r?\n/)[0];
+    const looksLikeHeader = firstLine.toLowerCase().includes("username");
+    const wrappedCsv = firstLine.includes(",") ? csv : `username\n${csv}`;
+    try {
+      setLoading(true);
+      const res = await adminBulkAddClassMembers(cls.id, wrappedCsv);
+      setBulkResult(res);
+      sound.playSuccess();
+      // Refetch members
+      const m = await adminGetClassMembers(cls.id);
+      setMembers(m.students);
+      await refresh();
+      // Clear CSV if all added, giữ lại nếu có errors để admin sửa
+      if (res.errors.length === 0 && res.added > 0) {
+        setBulkCsv("");
+        setBulkMode(false);
+      }
+    } catch (e: any) {
+      alert(e?.error || "Lỗi khi bulk add HS.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const memberIds = new Set(members.map((m) => m.id));
   const availableStudents = allStudents.filter((s) => !memberIds.has(s.id));
 
@@ -1216,40 +1255,114 @@ export function ManageMembersModal({
               className="p-3 rounded-2xl border space-y-2"
               style={{ backgroundColor: "var(--bg-soft)", borderColor: "var(--border)" }}
             >
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Tìm HS theo tên hoặc username..."
-                className={inputClass()}
-                style={inputStyle}
-                autoFocus
-              />
-              <div className="max-h-48 overflow-y-auto space-y-1">
-                {availableStudents.length === 0 ? (
-                  <p className="text-xs text-center py-2" style={{ color: "var(--muted)" }}>
-                    {search ? "Không tìm thấy." : "Tất cả HS đã ở trong lớp."}
-                  </p>
-                ) : (
-                  availableStudents.slice(0, 20).map((s) => (
+              <div className="flex items-center gap-2">
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Tìm HS theo tên hoặc username..."
+                  className={inputClass("flex-1")}
+                  style={inputStyle}
+                  autoFocus={!bulkMode}
+                />
+                <button
+                  onClick={() => {
+                    setBulkMode((v) => {
+                      if (v) setBulkResult(null);
+                      return !v;
+                    });
+                  }}
+                  className="text-[10px] font-extrabold px-2 py-1.5 rounded-lg shrink-0 whitespace-nowrap"
+                  style={{
+                    backgroundColor: bulkMode ? "var(--primary-soft)" : "var(--bg-elevated)",
+                    color: bulkMode ? "var(--primary)" : "var(--muted-strong)",
+                  }}
+                  title="Bulk add qua CSV"
+                >
+                  📋 Bulk
+                </button>
+              </div>
+              {bulkMode ? (
+                <div className="space-y-2">
+                  <textarea
+                    value={bulkCsv}
+                    onChange={(e) => setBulkCsv(e.target.value)}
+                    placeholder={"username\nnguyen\nan\nbinh"}
+                    rows={5}
+                    className={inputClass("font-mono text-xs")}
+                    style={inputStyle}
+                    autoFocus
+                  />
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[10px]" style={{ color: "var(--muted)" }}>
+                      Paste username (mỗi dòng 1 cái) hoặc CSV có header <code>username</code>.
+                    </p>
                     <button
-                      key={s.id}
-                      onClick={() => handleAdd(s.id)}
-                      className="w-full text-left px-3 py-2 rounded-xl flex items-center justify-between hover:opacity-80"
+                      onClick={handleBulkAdd}
+                      disabled={!bulkCsv.trim() || loading}
+                      className="text-xs font-extrabold px-3 py-1.5 rounded-xl disabled:opacity-50"
+                      style={{ backgroundColor: "var(--primary)", color: "var(--on-primary)" }}
+                    >
+                      {loading ? "Đang thêm…" : "Bulk add"}
+                    </button>
+                  </div>
+                  {bulkResult && (
+                    <div
+                      className="p-2 rounded-lg text-xs space-y-1"
                       style={{ backgroundColor: "var(--bg-elevated)" }}
                     >
-                      <div>
-                        <div className="text-xs font-extrabold">{s.name}</div>
-                        <div className="text-[10px]" style={{ color: "var(--muted)" }}>
-                          @{s.username} {s.cefr_level ? `· ${s.cefr_level}` : ""}
-                        </div>
+                      <div className="font-extrabold">
+                        ✅ Đã thêm {bulkResult.added}/{bulkResult.requested} HS.
+                        {bulkResult.skipped > 0 && ` (${bulkResult.skipped} đã có sẵn)`}
                       </div>
-                      <span className="text-xs font-extrabold" style={{ color: "var(--primary)" }}>
-                        + Thêm
-                      </span>
-                    </button>
-                  ))
-                )}
-              </div>
+                      {bulkResult.errors.length > 0 && (
+                        <div className="text-[10px] space-y-0.5 max-h-32 overflow-y-auto">
+                          <div className="font-extrabold" style={{ color: "var(--danger)" }}>
+                            ⚠️ {bulkResult.errors.length} lỗi:
+                          </div>
+                          {bulkResult.errors.slice(0, 10).map((e, i) => (
+                            <div key={i} style={{ color: "var(--muted-strong)" }}>
+                              {e.row > 0 ? `Dòng ${e.row}: ` : ""}
+                              <code>{e.username}</code> — {e.error}
+                            </div>
+                          ))}
+                          {bulkResult.errors.length > 10 && (
+                            <div style={{ color: "var(--muted)" }}>
+                              … và {bulkResult.errors.length - 10} lỗi khác
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="max-h-48 overflow-y-auto space-y-1">
+                  {availableStudents.length === 0 ? (
+                    <p className="text-xs text-center py-2" style={{ color: "var(--muted)" }}>
+                      {search ? "Không tìm thấy." : "Tất cả HS đã ở trong lớp."}
+                    </p>
+                  ) : (
+                    availableStudents.slice(0, 20).map((s) => (
+                      <button
+                        key={s.id}
+                        onClick={() => handleAdd(s.id)}
+                        className="w-full text-left px-3 py-2 rounded-xl flex items-center justify-between hover:opacity-80"
+                        style={{ backgroundColor: "var(--bg-elevated)" }}
+                      >
+                        <div>
+                          <div className="text-xs font-extrabold">{s.name}</div>
+                          <div className="text-[10px]" style={{ color: "var(--muted)" }}>
+                            @{s.username} {s.cefr_level ? `· ${s.cefr_level}` : ""}
+                          </div>
+                        </div>
+                        <span className="text-xs font-extrabold" style={{ color: "var(--primary)" }}>
+                          + Thêm
+                        </span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
             </div>
           )}
 
