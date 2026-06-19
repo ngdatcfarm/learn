@@ -16,6 +16,7 @@ import {
   MessageSquare,
   ChevronRight,
   Mic,
+  Upload,
 } from "lucide-react";
 import KpiCard from "./ui/KpiCard";
 import { Field, inputStyle, inputClass } from "./ui/Field";
@@ -53,6 +54,7 @@ import {
   EditClassModal,
   ManageMembersModal,
   TestZaloModal,
+  ImportUsersModal,
 } from "./AdminUserModals";
 
 type Section = "overview" | "users" | "classes" | "zalo" | "audio";
@@ -445,7 +447,7 @@ function UsersSection({ onRefresh }: { onRefresh: () => Promise<void> | void }) 
   const [roleFilter, setRoleFilter] = useState<"" | "student" | "parent" | "teacher" | "admin">("");
   const [search, setSearch] = useState("");
   const [showDeleted, setShowDeleted] = useState(false);
-  const [modal, setModal] = useState<"create" | null>(null);
+  const [modal, setModal] = useState<"create" | "import" | null>(null);
   const [editUser, setEditUser] = useState<AdminUser | null>(null);
   const [resetTarget, setResetTarget] = useState<{ user: { id: string; username: string }; temp: string } | null>(null);
 
@@ -567,6 +569,20 @@ function UsersSection({ onRefresh }: { onRefresh: () => Promise<void> | void }) 
           style={{ backgroundColor: "var(--primary)", color: "var(--on-primary)" }}
         >
           <Plus className="w-3.5 h-3.5" /> Tạo user
+        </button>
+        <button
+          onClick={() => {
+            sound.playClick();
+            setModal("import");
+          }}
+          className="px-3 py-2 rounded-xl text-xs font-extrabold flex items-center gap-1.5 border"
+          style={{
+            backgroundColor: "var(--bg-card)",
+            color: "var(--primary)",
+            borderColor: "var(--primary)",
+          }}
+        >
+          <Upload className="w-3.5 h-3.5" /> Import CSV
         </button>
       </div>
 
@@ -733,6 +749,15 @@ function UsersSection({ onRefresh }: { onRefresh: () => Promise<void> | void }) 
       <AnimatePresence>
         {modal === "create" && (
           <CreateUserModal onClose={() => setModal(null)} onSubmit={handleCreate} />
+        )}
+        {modal === "import" && (
+          <ImportUsersModal
+            onClose={() => setModal(null)}
+            onSuccess={() => {
+              load();
+              onRefresh();
+            }}
+          />
         )}
         {editUser && (
           <EditUserModal

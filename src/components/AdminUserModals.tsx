@@ -1,6 +1,6 @@
-import { useState, useEffect, type ReactNode, type FormEvent } from "react";
+import { useState, useEffect, useRef, type ReactNode, type FormEvent, type ChangeEvent } from "react";
 import { motion } from "motion/react";
-import { X, Check, Copy } from "lucide-react";
+import { X, Check, Copy, FileText, Upload } from "lucide-react";
 import sound from "../utils/sound";
 import {
   AdminUser,
@@ -9,6 +9,8 @@ import {
   AdminClass,
   ZaloSettings,
   LinkedUser,
+  ImportUserResult,
+  ImportUsersError,
   adminListUsers,
   adminGetClassMembers,
   adminAddClassMember,
@@ -17,6 +19,7 @@ import {
   adminAddParentLink,
   adminRemoveParentLink,
   adminTestZalo,
+  adminImportUsers,
 } from "../api/client";
 import { Field, inputStyle, inputClass } from "./ui/Field";
 import { ModalShell } from "./ui/ModalShell";
@@ -1306,6 +1309,309 @@ export function TestZaloModal({
           >
             {JSON.stringify(result, null, 2)}
           </pre>
+        </div>
+      )}
+    </ModalShell>
+  );
+}
+
+// ============================================================
+// ImportUsersModal — Bulk import users từ CSV
+// ============================================================
+
+/**
+ * CSV template (copy để test):
+ *
+ * username,name,role,password,level,cefr_level,goal,daily_goal_minutes,phone
+ * nguyen2,Nguyễn Văn A,student,,Beginner,A1,Tổng quát,15,
+ * ph2,Phụ huynh 2,parent,pass1234,,,,,0987654321
+ * gv2,Trần Thị B,teacher,teacher1234,,,Giao tiếp,15,
+ *
+ * Rules:
+ * - Header bắt buộc: username, name, role
+ * - role: student | parent | teacher | admin
+ * - password: optional — nếu trống sẽ tự sinh temp + force change
+ * - level: Beginner | Intermediate | Advanced (chỉ áp dụng cho student)
+ * - cefr_level: A1..C2
+ * - goal: IELTS | Giao tiếp | Học thuật | Tổng quát
+ * - daily_goal_minutes: 5 | 15 | 30
+ * - phone: optional, 9-15 chữ số (có thể có + ở đầu)
+ *
+ * Atomic: nếu 1 row lỗi → báo lỗi hết, KHÔNG insert gì.
+ */
+const CSV_TEMPLATE = `username,name,role,password,level,cefr_level,goal,daily_goal_minutes,phone
+nguyen2,Nguyễn Văn A,student,,Beginner,A1,Tổng quát,15,
+ph2,Phụ huynh 2,parent,pass1234,,,,,0987654321
+gv2,Trần Thị B,teacher,teacher1234,,,Giao tiếp,15,`;
+
+export function ImportUsersModal({
+  onClose,
+  onSuccess,
+}: {
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [csv, setCsv] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [errors, setErrors] = useState<ImportUsersError[] | null>(null);
+  const [created, setCreated] = useState<ImportUserResult[] | null>(null);
+  const [summary, setSummary] = useState<{ total: number; created: number } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    setCsv(text);
+    setErrors(null);
+    setCreated(null);
+    setSummary(null);
+  };
+
+  const handleUseTemplate = () => {
+    setCsv(CSV_TEMPLATE);
+    setErrors(null);
+    setCreated(null);
+    setSummary(null);
+  };
+
+  const handleSubmit = async () => {
+    if (!csv.trim()) {
+      setErrors([{ row: 0, username: "", error: "Chưa có nội dung CSV." }]);
+      return;
+    }
+    setSubmitting(true);
+    setErrors(null);
+    setCreated(null);
+    setSummary(null);
+    sound.playClick();
+    try {
+      const res = await adminImportUsers(csv);
+      setCreated(res.created);
+      setSummary(res.summary);
+      sound.playSuccess();
+    } catch (e: any) {
+      sound.playIncorrect();
+      if (e?.errors && Array.isArray(e.errors)) {
+        setErrors(e.errors);
+      } else {
+        setErrors([{ row: 0, username: "", error: e?.error || "Import thất bại." }]);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleCopyAll = () => {
+    if (!created) return;
+    const lines = ["username\tname\trole\tpassword"];
+    for (const c of created) {
+      lines.push(`${c.username}\t${c.name}\t${c.role}\t${c.tempPassword}`);
+    }
+    navigator.clipboard.writeText(lines.join("\n"));
+    sound.playSuccess();
+  };
+
+  const handleDone = () => {
+    if (created && created.length > 0) {
+      onSuccess();
+    }
+    onClose();
+  };
+
+  return (
+    <ModalShell
+      title="📥 Import users từ CSV"
+      onClose={handleDone}
+      maxWidth="max-w-2xl"
+    >
+      {/* Toolbar: file upload + template */}
+      <div className="flex gap-2 flex-wrap">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".csv,text/csv"
+          onChange={handleFile}
+          className="hidden"
+        />
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          className="px-3 py-1.5 rounded-xl text-xs font-extrabold flex items-center gap-1.5 border"
+          style={{
+            backgroundColor: "var(--bg-soft)",
+            color: "var(--muted)",
+            borderColor: "var(--border)",
+          }}
+        >
+          <Upload className="w-3.5 h-3.5" /> Chọn file .csv
+        </button>
+        <button
+          type="button"
+          onClick={handleUseTemplate}
+          className="px-3 py-1.5 rounded-xl text-xs font-extrabold flex items-center gap-1.5 border"
+          style={{
+            backgroundColor: "var(--bg-soft)",
+            color: "var(--muted)",
+            borderColor: "var(--border)",
+          }}
+        >
+          <FileText className="w-3.5 h-3.5" /> Dùng template mẫu
+        </button>
+      </div>
+
+      {/* CSV input */}
+      <Field label="Nội dung CSV" hint="Dòng 1 là header. Mỗi dòng sau là 1 user.">
+        <textarea
+          value={csv}
+          onChange={(e) => {
+            setCsv(e.target.value);
+            setErrors(null);
+            setCreated(null);
+            setSummary(null);
+          }}
+          placeholder="username,name,role,password,level,cefr_level,goal,daily_goal_minutes,phone&#10;..."
+          rows={8}
+          className={`${inputClass()} font-mono text-[11px]`}
+          style={{ ...inputStyle, resize: "vertical" }}
+          disabled={submitting || created !== null}
+        />
+      </Field>
+
+      {/* Errors */}
+      {errors && errors.length > 0 && (
+        <div
+          className="p-3 rounded-2xl border space-y-2"
+          style={{
+            backgroundColor: "var(--danger-soft)",
+            borderColor: "var(--danger)",
+          }}
+        >
+          <div
+            className="text-xs font-extrabold flex items-center gap-1.5"
+            style={{ color: "var(--danger)" }}
+          >
+            ✗ {errors.length} lỗi — sửa rồi thử lại
+          </div>
+          <div className="max-h-48 overflow-y-auto space-y-1">
+            {errors.map((e, i) => (
+              <div
+                key={i}
+                className="text-[11px] font-mono px-2 py-1 rounded bg-white/40"
+                style={{ color: "var(--danger)" }}
+              >
+                {e.row > 0 ? `Dòng ${e.row}` : "—"}{" "}
+                {e.username && <strong>@{e.username}</strong>} {e.username && "— "}
+                {e.error}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Success summary */}
+      {created && summary && (
+        <div
+          className="p-3 rounded-2xl border space-y-2"
+          style={{
+            backgroundColor: "var(--success-soft)",
+            borderColor: "var(--success)",
+          }}
+        >
+          <div
+            className="text-xs font-extrabold flex items-center justify-between"
+            style={{ color: "var(--success)" }}
+          >
+            <span>✓ Tạo {summary.created}/{summary.total} users thành công</span>
+            <button
+              type="button"
+              onClick={handleCopyAll}
+              className="px-2 py-1 rounded-lg text-[10px] font-extrabold flex items-center gap-1 border"
+              style={{
+                backgroundColor: "var(--bg-card)",
+                color: "var(--success)",
+                borderColor: "var(--success)",
+              }}
+            >
+              <Copy className="w-3 h-3" /> Copy tất cả
+            </button>
+          </div>
+          <div className="max-h-64 overflow-y-auto">
+            <table className="w-full text-[11px] font-mono">
+              <thead>
+                <tr
+                  className="border-b-2 text-left"
+                  style={{ borderColor: "var(--success)" }}
+                >
+                  <th className="px-2 py-1">Username</th>
+                  <th className="px-2 py-1">Name</th>
+                  <th className="px-2 py-1">Role</th>
+                  <th className="px-2 py-1">Password</th>
+                </tr>
+              </thead>
+              <tbody>
+                {created.map((c) => (
+                  <tr
+                    key={c.id}
+                    className="border-b"
+                    style={{ borderColor: "var(--border-soft)" }}
+                  >
+                    <td className="px-2 py-1 font-extrabold">@{c.username}</td>
+                    <td className="px-2 py-1 truncate max-w-[140px]">{c.name}</td>
+                    <td className="px-2 py-1">{c.role}</td>
+                    <td className="px-2 py-1">
+                      <code
+                        className="px-1.5 py-0.5 rounded"
+                        style={{ backgroundColor: "var(--bg-card)" }}
+                      >
+                        {c.tempPassword}
+                      </code>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p
+            className="text-[10px] leading-relaxed"
+            style={{ color: "var(--muted)" }}
+          >
+            ⚠️ Copy password ngay — chỉ hiển thị 1 lần. User tự đổi pass khi đăng nhập
+            lần đầu.
+          </p>
+        </div>
+      )}
+
+      {/* Footer */}
+      {created ? (
+        <button
+          type="button"
+          onClick={handleDone}
+          className="w-full py-2.5 rounded-xl text-sm font-extrabold"
+          style={{ backgroundColor: "var(--primary)", color: "var(--on-primary)" }}
+        >
+          Xong
+        </button>
+      ) : (
+        <div className="flex gap-2.5">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            className="flex-1 py-2.5 rounded-xl text-sm font-extrabold disabled:opacity-50"
+            style={{ backgroundColor: "var(--bg-soft)", color: "var(--muted)" }}
+          >
+            Hủy
+          </button>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={submitting || !csv.trim()}
+            className="flex-1 py-2.5 rounded-xl text-sm font-extrabold disabled:opacity-60"
+            style={{ backgroundColor: "var(--primary)", color: "var(--on-primary)" }}
+          >
+            {submitting ? "Đang xử lý..." : "Import"}
+          </button>
         </div>
       )}
     </ModalShell>

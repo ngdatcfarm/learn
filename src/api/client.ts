@@ -571,6 +571,54 @@ export async function adminResetPassword(
   return request("POST", `/api/admin/users/${id}/reset-password`);
 }
 
+/**
+ * POST /api/admin/users/import — Bulk import users từ CSV.
+ * Body: { csv: string }
+ *
+ * CSV header (required): username, name, role
+ * Optional columns: password, level, cefr_level, goal, daily_goal_minutes, phone
+ *
+ * Atomic: nếu 1 row lỗi → 400 với errors[], KHÔNG insert gì.
+ * User tạo ra mặc định có must_change_password=1 (an toàn khi admin dùng
+ * temp password hoặc user tự cung cấp pass).
+ *
+ * Response success:
+ *   {
+ *     ok: true,
+ *     summary: { total, created },
+ *     created: [{ row, id, username, name, role, tempPassword }]
+ *   }
+ *
+ * Response error:
+ *   { error, errors: [{ row, username, error }] }
+ */
+export interface ImportUserResult {
+  row: number;
+  id: string;
+  username: string;
+  name: string;
+  role: "student" | "parent" | "teacher" | "admin";
+  tempPassword: string;
+}
+
+export interface ImportUsersResponse {
+  ok: true;
+  summary: { total: number; created: number };
+  created: ImportUserResult[];
+}
+
+export interface ImportUsersError {
+  row: number;
+  username: string;
+  error: string;
+}
+
+export async function adminImportUsers(
+  csv: string
+): Promise<ImportUsersResponse> {
+  return request<ImportUsersResponse>("POST", "/api/admin/users/import", { csv });
+}
+
 export async function adminListClasses(): Promise<{ classes: AdminClass[] }> {
   return request("GET", "/api/admin/classes");
 }

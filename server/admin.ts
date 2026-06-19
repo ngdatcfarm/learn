@@ -8,6 +8,7 @@
  *   GET    /api/admin/users
  *   GET    /api/admin/users/:id
  *   POST   /api/admin/users
+ *   POST   /api/admin/users/import           (bulk CSV — Step 9c backup?)
  *   PATCH  /api/admin/users/:id
  *   DELETE /api/admin/users/:id              (soft-delete)
  *   POST   /api/admin/users/:id/restore
@@ -590,6 +591,365 @@ adminRouter.post(
     });
   }
 );
+
+// ============================================================
+// BULK IMPORT (CSV) — Admin import nhiều user cùng lúc
+// ============================================================
+
+/**
+ * Cap cho CSV payload (5 MB) — đủ cho ~10-20k rows. Tránh OOM nếu admin
+ * upload file quá lớn nhầm. Express body limit mặc định là 100 KB nên
+ * admin sẽ thấy 413 — set riêng cho endpoint này thân thiện hơn.
+ */
+const MAX_CSV_BYTES = 5 * 1024 * 1024;
+
+/** Chunk size cho bulk INSERT — mỗi row ~250 byte → 500 rows ≈ 125 KB, an toàn dưới max_allowed_packet (16 MB). */
+const INSERT_CHUNK = 500;
+
+/**
+ * Minimal CSV parser hỗ trợ:
+ *   - Quoted fields: "Nguyễn, Văn A"
+ *   - Escaped quote: "" → "
+ *   - Newlines \r\n hoặc \n
+ *   - Trailing empty fields (line kết thúc bằng comma)
+ *
+ * KHÔNG support: multi-line quoted fields (ít gặp khi xuất từ Excel/Sheets
+ * bằng cách "Save as CSV"). Đủ cho admin bulk import.
+ *
+ * Trả về mảng rows (row[0] là header). Throw nếu parse fail.
+ */
+function parseCsv(csv: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let inQuotes = false;
+  for (let i = 0; i < csv.length; i++) {
+    const c = csv[i];
+    if (inQuotes) {
+      if (c === '"') {
+        // Escaped quote ""
+        if (csv[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += c;
+      }
+      continue;
+    }
+    if (c === '"') {
+      inQuotes = true;
+      continue;
+    }
+    if (c === ",") {
+      row.push(field);
+      field = "";
+      continue;
+    }
+    if (c === "\n" || c === "\r") {
+      // Bỏ qua \r\n → đã xử lý ở \n
+      if (c === "\r" && csv[i + 1] === "\n") i++;
+      row.push(field);
+      field = "";
+      rows.push(row);
+      row = [];
+      continue;
+    }
+    field += c;
+  }
+  // Last field (file không kết thúc bằng newline)
+  if (field !== "" || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows;
+}
+
+/**
+ * Normalize header: trim + lowercase + bỏ khoảng trắng thừa.
+ * Cho phép "User Name" === "user_name".
+ */
+function normalizeHeader(h: string): string {
+  return h.trim().toLowerCase().replace(/\s+/g, "_");
+}
+
+interface ImportRow {
+  row: number; // 1-indexed (row 1 là header, row 2 là user đầu tiên)
+  username: string;
+  name: string;
+  role: string;
+  password: string; // empty nếu không có → sẽ generate temp
+  level: string | null;
+  cefr_level: string | null;
+  goal: string | null;
+  daily_goal_minutes: number | null;
+  phone: string | null;
+}
+
+const VALID_LEVELS = ["Beginner", "Intermediate", "Advanced"];
+const VALID_CEFR = ["A1", "A2", "B1", "B2", "C1", "C2"];
+const VALID_GOALS = ["IELTS", "Giao tiếp", "Học thuật", "Tổng quát"];
+/** Mirror src/utils/roles.ts DAILY_GOAL_OPTIONS — server không import FE file. */
+const VALID_DAILY_GOALS = [5, 15, 30] as const;
+
+/**
+ * Validate 1 row. Trả về string error hoặc null nếu OK.
+ */
+function validateImportRow(row: ImportRow): string | null {
+  if (!row.username) return "Thiếu username";
+  if (row.username.length > 64) return "username quá dài (>64)";
+  if (!/^[a-zA-Z0-9_.-]+$/.test(row.username)) {
+    return "username chỉ chứa chữ, số, _, ., -";
+  }
+  if (!row.name) return "Thiếu name";
+  if (row.name.length > 128) return "name quá dài (>128)";
+  if (!VALID_ROLES.some((r) => r === row.role)) {
+    return `role không hợp lệ: ${row.role}`;
+  }
+  if (row.password && row.password.length < 4) {
+    return "password quá ngắn (tối thiểu 4 ký tự)";
+  }
+  if (row.level && !VALID_LEVELS.includes(row.level)) {
+    return `level không hợp lệ: ${row.level}`;
+  }
+  if (row.cefr_level && !VALID_CEFR.includes(row.cefr_level)) {
+    return `cefr_level không hợp lệ: ${row.cefr_level}`;
+  }
+  if (row.goal && !VALID_GOALS.includes(row.goal)) {
+    return `goal không hợp lệ: ${row.goal}`;
+  }
+  if (row.daily_goal_minutes !== null && !VALID_DAILY_GOALS.includes(row.daily_goal_minutes as 5 | 15 | 30)) {
+    return `daily_goal_minutes phải là 5, 15 hoặc 30`;
+  }
+  if (row.phone && !PHONE_REGEX.test(row.phone)) {
+    return "phone không hợp lệ (9-15 chữ số, có thể có + ở đầu)";
+  }
+  return null;
+}
+
+/**
+ * Parse + validate + collect errors. Tách khỏi route handler để dễ test.
+ * Trả về { parsed, errors } — nếu errors.length > 0 thì route trả 400.
+ */
+function parseAndValidateImport(csv: string): {
+  parsed: ImportRow[];
+  errors: { row: number; username: string; error: string }[];
+} {
+  const errors: { row: number; username: string; error: string }[] = [];
+  const rows = parseCsv(csv);
+  if (rows.length < 2) {
+    errors.push({ row: 0, username: "", error: "CSV phải có header + ít nhất 1 dòng dữ liệu." });
+    return { parsed: [], errors };
+  }
+
+  // Header → index map
+  const headers = rows[0].map(normalizeHeader);
+  const idxOf = (name: string) => headers.indexOf(name);
+  const required = ["username", "name", "role"];
+  for (const r of required) {
+    if (idxOf(r) === -1) {
+      errors.push({
+        row: 0,
+        username: "",
+        error: `CSV thiếu cột bắt buộc: ${r}. Cột hiện có: ${headers.join(", ")}`,
+      });
+      return { parsed: [], errors };
+    }
+  }
+
+  // Hoist column indices (tránh gọi idxOf N lần cho M rows)
+  const iUser = idxOf("username");
+  const iName = idxOf("name");
+  const iRole = idxOf("role");
+  const iPass = idxOf("password");
+  const iLevel = idxOf("level");
+  const iCefr = idxOf("cefr_level");
+  const iGoal = idxOf("goal");
+  const iDaily = idxOf("daily_goal_minutes");
+  const iPhone = idxOf("phone");
+  const hasLevel = iLevel !== -1;
+  const hasCefr = iCefr !== -1;
+  const hasGoal = iGoal !== -1;
+  const hasDaily = iDaily !== -1;
+  const hasPhone = iPhone !== -1;
+  const hasPass = iPass !== -1;
+
+  const parsed: ImportRow[] = [];
+  for (let i = 1; i < rows.length; i++) {
+    const cells = rows[i];
+    // Skip empty/blank lines (tất cả cells đều rỗng)
+    if (cells.every((c) => c.trim() === "")) continue;
+
+    // Parse daily_goal_minutes raw — giữ NaN để validateImportRow báo lỗi
+    // (trước đây `Number("abc")` = NaN bị falsy → silently set null → defaults 15)
+    let daily: number | null = null;
+    if (hasDaily) {
+      const raw = (cells[iDaily] || "").trim();
+      if (raw !== "") daily = Number(raw);
+    }
+
+    parsed.push({
+      row: i + 1,
+      username: (cells[iUser] || "").trim(),
+      name: (cells[iName] || "").trim(),
+      role: (cells[iRole] || "").trim(),
+      password: hasPass ? ((cells[iPass] || "").trim()) : "",
+      level: hasLevel ? ((cells[iLevel] || "").trim() || null) : null,
+      cefr_level: hasCefr ? ((cells[iCefr] || "").trim() || null) : null,
+      goal: hasGoal ? ((cells[iGoal] || "").trim() || null) : null,
+      daily_goal_minutes: daily,
+      phone: hasPhone ? ((cells[iPhone] || "").trim() || null) : null,
+    });
+  }
+
+  if (parsed.length === 0) {
+    errors.push({ row: 0, username: "", error: "CSV không có dòng dữ liệu nào." });
+    return { parsed, errors };
+  }
+
+  // Per-row validation
+  for (const r of parsed) {
+    const e = validateImportRow(r);
+    if (e) errors.push({ row: r.row, username: r.username, error: e });
+  }
+
+  // Duplicate username trong batch
+  const seen = new Set<string>();
+  for (const r of parsed) {
+    if (seen.has(r.username)) {
+      errors.push({ row: r.row, username: r.username, error: "username trùng với dòng trước trong CSV" });
+    }
+    seen.add(r.username);
+  }
+
+  return { parsed, errors };
+}
+
+adminRouter.post("/users/import", async (req: Request, res: Response) => {
+  const admin = await requireRole(req, res, ["admin"]);
+  if (!admin) return;
+
+  const { csv } = req.body || {};
+  if (!csv || typeof csv !== "string") {
+    return res.status(400).json({ error: "Thiếu CSV content." });
+  }
+  if (csv.length > MAX_CSV_BYTES) {
+    return res.status(413).json({
+      error: `CSV quá lớn (${(csv.length / 1024 / 1024).toFixed(1)} MB > ${MAX_CSV_BYTES / 1024 / 1024} MB).`,
+    });
+  }
+
+  // Parse + validate
+  let parsed: ImportRow[];
+  let errors: { row: number; username: string; error: string }[];
+  try {
+    ({ parsed, errors } = parseAndValidateImport(csv));
+  } catch (e: any) {
+    return res.status(400).json({ error: `CSV không hợp lệ: ${e.message}` });
+  }
+
+  // Check username đã tồn tại trong DB (sau per-row validate để skip duplicate batch errors sớm)
+  if (parsed.length > 0) {
+    const existingRows = await query<RowDataPacket[]>(
+      `SELECT username FROM users WHERE username IN (?)`,
+      [parsed.map((r) => r.username)]
+    );
+    const existingUsernames = new Set(existingRows.map((r) => r.username as string));
+    for (const r of parsed) {
+      if (existingUsernames.has(r.username)) {
+        errors.push({ row: r.row, username: r.username, error: "username đã tồn tại trong hệ thống" });
+      }
+    }
+  }
+
+  // Nếu có lỗi → 400, KHÔNG insert gì cả (atomic)
+  if (errors.length > 0) {
+    return res.status(400).json({
+      error: `CSV có ${errors.length} lỗi. Sửa rồi thử lại.`,
+      errors,
+    });
+  }
+
+  // Hash passwords TRƯỚC khi mở transaction (scrypt chậm ~70ms/lần, không
+  // cần giữ DB connection trong lúc hash). Giữ all-or-nothing semantics: nếu
+  // bất kỳ row nào insert fail → rollback → không user nào được tạo.
+  const prepared = parsed.map((r) => {
+    const temp = r.password || generateTempPassword();
+    const { hash, salt } = hashPassword(temp);
+    return {
+      row: r.row,
+      id: crypto.randomUUID(),
+      username: r.username,
+      name: r.name,
+      role: r.role,
+      tempPassword: temp,
+      hash,
+      salt,
+      level: r.level,
+      cefr_level: r.cefr_level,
+      goal: r.goal,
+      daily_goal_minutes: r.daily_goal_minutes ?? 15,
+      phone: r.phone,
+    };
+  });
+
+  // Multi-row INSERT theo chunk. Tránh N+1 round-trips (1 round-trip / 500 rows
+  // thay vì 1 round-trip / row). Cùng transaction để giữ atomicity.
+  await withTransaction(async (conn) => {
+    for (let i = 0; i < prepared.length; i += INSERT_CHUNK) {
+      const chunk = prepared.slice(i, i + INSERT_CHUNK);
+      const placeholders = chunk.map(() => "(?,?,?,?,?,?,?,?,?,?,?,?)").join(",");
+      const params: any[] = [];
+      for (const c of chunk) {
+        params.push(
+          c.id, c.username, c.hash, c.salt, 1, c.role, c.name,
+          c.level, c.cefr_level, c.goal, c.daily_goal_minutes, c.phone
+        );
+      }
+      await conn.execute(
+        `INSERT INTO users (id, username, password_hash, password_salt, must_change_password, role, name,
+                            level, cefr_level, goal, daily_goal_minutes, phone)
+         VALUES ${placeholders}`,
+        params
+      );
+    }
+  });
+
+  // Audit: targetId=null (intentional — bulk action không có single target)
+  // KHÔNG log temp passwords (PII + security).
+  await logAudit({
+    actorId: admin.id,
+    action: "user.bulk_import",
+    targetType: "user",
+    targetId: null,
+    details: {
+      count: prepared.length,
+      roles: prepared.reduce<Record<string, number>>((acc, c) => {
+        acc[c.role] = (acc[c.role] || 0) + 1;
+        return acc;
+      }, {}),
+      usernames: prepared.map((c) => c.username),
+    },
+    ip: req.ip,
+  });
+
+  const created = prepared.map((c) => ({
+    row: c.row,
+    id: c.id,
+    username: c.username,
+    name: c.name,
+    role: c.role,
+    tempPassword: c.tempPassword,
+  }));
+
+  res.json({
+    ok: true,
+    summary: { total: parsed.length, created: prepared.length },
+    created,
+  });
+});
 
 // ============================================================
 // CLASSES
