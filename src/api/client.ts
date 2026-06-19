@@ -313,6 +313,48 @@ export interface ParentChild {
 }
 
 /**
+ * GET /api/dashboard/parent/classes — Step 10h.
+ * PH xem các lớp con mình đang học + aggregate stats.
+ *
+ * Mỗi class card:
+ *   - Thông tin lớp (name, teacher, schedule, description)
+ *   - total_students (context lớp lớn cỡ nào) + my_children_count
+ *   - today aggregate: tổng tasks_done/minutes từ con của PH + số con active
+ *   - my_children[]: compact info per child (id, name, streak, needs_help)
+ *
+ * Sort: lớp có con cần chú ý trước.
+ */
+export interface ParentClassChild {
+  id: string;
+  name: string;
+  username: string;
+  relationship: string | null;
+  streak: number;
+  needs_help: boolean;
+}
+
+export interface ParentClassSummary {
+  id: string;
+  name: string;
+  schedule: string | null;
+  description: string | null;
+  teacher: { id: string; name: string; username: string } | null;
+  total_students: number;
+  my_children_count: number;
+  my_children: ParentClassChild[];
+  today: {
+    tasks_done: number;
+    minutes: number;
+    active_children: number;
+  };
+}
+
+export interface ParentClassesResponse {
+  classes: ParentClassSummary[];
+  count: number;
+}
+
+/**
  * GET /api/dashboard/teacher — server auto-resolves lớp đầu tiên của GV (admin → lớp bất kỳ).
  * Nếu muốn explicit classId (multi-class GV), dùng /api/dashboard/teacher/:classId sau.
  */
@@ -341,6 +383,14 @@ export async function listMyClasses(): Promise<{ classes: TeacherClassItem[] }> 
 
 export async function getParentDashboard(): Promise<ParentDashboard> {
   return request<ParentDashboard>("GET", "/api/dashboard/parent");
+}
+
+/**
+ * GET /api/dashboard/parent/classes — Step 10h.
+ * Xem các lớp mà con của PH đang học, kèm aggregate today stats.
+ */
+export async function getParentClasses(): Promise<ParentClassesResponse> {
+  return request<ParentClassesResponse>("GET", "/api/dashboard/parent/classes");
 }
 
 /**

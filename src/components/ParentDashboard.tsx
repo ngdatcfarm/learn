@@ -16,9 +16,11 @@ import {
 import { SKILL_META, SkillId } from "../types";
 import {
   getParentDashboard,
+  getParentClasses,
   updateMyPhone,
   ParentDashboard as ParentDashboardData,
   ParentChild,
+  ParentClassSummary,
 } from "../api/client";
 import sound from "../utils/sound";
 import SkillCard from "./ui/SkillCard";
@@ -26,12 +28,13 @@ import KpiCard from "./ui/KpiCard";
 import { Field, inputStyle, inputClass } from "./ui/Field";
 import { RELATIONSHIP_LABEL } from "../utils/roles";
 
-type Section = "overview" | "settings";
+type Section = "overview" | "classes" | "settings";
 
 const SKILL_ORDER: SkillId[] = ["read", "write", "listen", "speak", "learn"];
 
 const SECTIONS: { id: Section; label: string; emoji: string }[] = [
   { id: "overview", label: "Tổng quan", emoji: "📊" },
+  { id: "classes", label: "Theo lớp", emoji: "🏫" },
   { id: "settings", label: "Cài đặt", emoji: "⚙️" },
 ];
 
@@ -370,6 +373,175 @@ function OverviewSection({ data }: { data: ParentDashboardData }) {
 }
 
 // ============================================================
+// Classes section — PH xem các lớp con mình đang học (Step 10h)
+// ============================================================
+
+function ClassesSection({ classes }: { classes: ParentClassSummary[] }) {
+  if (classes.length === 0) {
+    return (
+      <div
+        className="p-8 rounded-3xl border text-center space-y-3"
+        style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border)" }}
+      >
+        <div className="text-3xl">🏫</div>
+        <p className="text-sm font-extrabold">Con chưa được xếp vào lớp nào.</p>
+        <p className="text-xs" style={{ color: "var(--muted)" }}>
+          Liên hệ trung tâm để được thêm vào lớp học.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-extrabold uppercase tracking-wider" style={{ color: "var(--muted-strong)" }}>
+          {classes.length} lớp • {classes.reduce((s, c) => s + c.my_children_count, 0)} con đang học
+        </p>
+      </div>
+
+      {classes.map((cls) => {
+        const hasAlert = cls.my_children.some((c) => c.needs_help);
+        return (
+          <motion.div
+            key={cls.id}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="p-4 md:p-5 rounded-3xl border space-y-3.5 shadow-sm"
+            style={{
+              backgroundColor: "var(--bg-card)",
+              borderColor: hasAlert ? "var(--danger)" : "var(--border)",
+            }}
+          >
+            {/* Header */}
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-base md:text-lg font-extrabold tracking-tight truncate">
+                    🏫 {cls.name}
+                  </h3>
+                  {hasAlert && (
+                    <span
+                      className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full border shrink-0"
+                      style={{
+                        backgroundColor: "var(--danger-soft)",
+                        color: "var(--danger)",
+                        borderColor: "var(--danger)",
+                      }}
+                    >
+                      ⚠️ Cần chú ý
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1.5 mt-1 flex-wrap text-[11px]" style={{ color: "var(--muted)" }}>
+                  {cls.teacher && (
+                    <span>
+                      👨‍🏫 GV <span className="font-extrabold" style={{ color: "var(--muted-strong)" }}>{cls.teacher.name}</span>
+                    </span>
+                  )}
+                  {cls.schedule && (
+                    <span className="font-extrabold" style={{ color: "var(--primary)" }}>
+                      • 📅 {cls.schedule}
+                    </span>
+                  )}
+                  <span>
+                    • 👥 {cls.total_students} HS / lớp
+                    {cls.my_children_count > 1 && ` (${cls.my_children_count} con của bạn)`}
+                  </span>
+                </div>
+                {cls.description && (
+                  <p className="text-[11px] mt-1 italic" style={{ color: "var(--muted)" }}>
+                    {cls.description}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Aggregate KPIs (today) */}
+            <div className="grid grid-cols-3 gap-2">
+              <KpiCard
+                icon={<CheckCircle2 className="w-4 h-4" />}
+                label="Bài (lớp này)"
+                value={cls.today.tasks_done}
+                color="var(--success)"
+              />
+              <KpiCard
+                icon={<Clock className="w-4 h-4" />}
+                label="Phút"
+                value={cls.today.minutes}
+                suffix="ph"
+                color="var(--primary)"
+              />
+              <KpiCard
+                icon={<BarChart3 className="w-4 h-4" />}
+                label="Con active"
+                value={`${cls.today.active_children}/${cls.my_children_count}`}
+                color="var(--secondary)"
+              />
+            </div>
+
+            {/* My children in this class */}
+            <div className="space-y-1.5 pt-2 border-t" style={{ borderColor: "var(--border-soft)" }}>
+              <div
+                className="text-[10px] font-extrabold uppercase tracking-wider"
+                style={{ color: "var(--muted-strong)" }}
+              >
+                Con của bạn trong lớp
+              </div>
+              {cls.my_children.map((child) => (
+                <div
+                  key={child.id}
+                  className="flex items-center gap-2.5 p-2 rounded-xl"
+                  style={{ backgroundColor: "var(--bg-elevated)" }}
+                >
+                  <div
+                    className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-extrabold shrink-0"
+                    style={{
+                      background: child.needs_help
+                        ? "linear-gradient(135deg, var(--danger), var(--accent))"
+                        : "linear-gradient(135deg, var(--primary), var(--accent))",
+                      color: "white",
+                    }}
+                  >
+                    {child.name.charAt(0).toUpperCase()}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-extrabold truncate">{child.name}</span>
+                      {child.needs_help && (
+                        <span
+                          className="w-1.5 h-1.5 rounded-full shrink-0"
+                          style={{ backgroundColor: "var(--danger)" }}
+                          title="Cần chú ý"
+                        />
+                      )}
+                    </div>
+                    <div className="text-[10px]" style={{ color: "var(--muted)" }}>
+                      {(child.relationship && RELATIONSHIP_LABEL[child.relationship]) || "Con"}
+                    </div>
+                  </div>
+                  <div
+                    className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-extrabold shrink-0"
+                    style={{
+                      backgroundColor: child.streak > 0 ? "var(--streak-soft, var(--primary-soft))" : "var(--bg)",
+                      color: child.streak > 0 ? "var(--streak)" : "var(--muted)",
+                    }}
+                    title="Streak hiện tại"
+                  >
+                    <Flame className="w-3 h-3" />
+                    {child.streak}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ============================================================
 // Settings section (phone)
 // ============================================================
 
@@ -525,16 +697,22 @@ function SettingsSection({
 export default function ParentDashboard() {
   const [section, setSection] = useState<Section>("overview");
   const [data, setData] = useState<ParentDashboardData | null>(null);
+  const [classes, setClasses] = useState<ParentClassSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async (showSpinner = true) => {
     if (showSpinner) setLoading(true);
     try {
-      const res = await getParentDashboard();
-      setData(res);
+      // Parallel fetch overview + classes
+      const [dashRes, classesRes] = await Promise.all([
+        getParentDashboard(),
+        getParentClasses(),
+      ]);
+      setData(dashRes);
+      setClasses(classesRes.classes);
     } catch (e) {
-      console.warn("getParentDashboard failed:", e);
+      console.warn("ParentDashboard load failed:", e);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -671,6 +849,17 @@ export default function ParentDashboard() {
             transition={{ duration: 0.15 }}
           >
             <OverviewSection data={data} />
+          </motion.div>
+        )}
+        {section === "classes" && (
+          <motion.div
+            key="classes"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.15 }}
+          >
+            <ClassesSection classes={classes} />
           </motion.div>
         )}
         {section === "settings" && (

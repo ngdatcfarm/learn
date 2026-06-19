@@ -359,3 +359,160 @@ dashboardRouter.get("/parent", async (req: Request, res: Response) => {
     count: children.length,
   });
 });
+
+/**
+ * GET /api/dashboard/parent/classes
+ * PH xem các lớp mà con mình đang học, kèm aggregate stats.
+ *
+ * Mỗi class card gồm:
+ *   - Thông tin lớp (name, teacher, schedule)
+ *   - my_children_count / total_students (PH nhìn được context lớp lớn cỡ nào)
+ *   - today aggregate (tasks_done, minutes, active_children) — tính từ
+ *     getTodayActivity của các con của PH trong lớp
+ *   - children[] compact info (id, name, username, streak, needs_help)
+ *
+ * Query 1 round-trip JOIN parent_links + class_members + classes + users
+ * → group theo class_id ở JS. Sau đó parallel Promise.all cho today + engagement.
+ */
+interface ParentClassRow extends RowDataPacket {
+  class_id: string;
+  class_name: string;
+  schedule: string | null;
+  description: string | null;
+  teacher_id: string | null;
+  teacher_name: string | null;
+  teacher_username: string | null;
+  student_id: string;
+  student_name: string;
+  student_username: string;
+  relationship: string | null;
+  total_students: number; // COUNT qua subquery hoặc groupby
+}
+
+dashboardRouter.get("/parent/classes", async (req: Request, res: Response) => {
+  const parent = await requireRole(req, res, ["parent", "admin"]);
+  if (!parent) return;
+
+  // 1 query: lấy tất cả class + PH's children trong class đó + teacher + total students
+  // Dùng subquery để đếm total_students của class (không phải chỉ con của PH).
+  const rows = (await query<ParentClassRow[]>(
+    `SELECT c.id AS class_id, c.name AS class_name, c.schedule, c.description,
+            u.id AS teacher_id, u.name AS teacher_name, u.username AS teacher_username,
+            s.id AS student_id, s.name AS student_name, s.username AS student_username,
+            pl.relationship,
+            (SELECT COUNT(*) FROM class_members cm2 WHERE cm2.class_id = c.id) AS total_students
+     FROM parent_links pl
+     JOIN class_members cm ON cm.student_id = pl.student_id
+     JOIN classes c ON c.id = cm.class_id
+     LEFT JOIN users u ON u.id = c.teacher_id
+     JOIN users s ON s.id = cm.student_id
+     WHERE pl.parent_id = ? AND s.deleted_at IS NULL
+     ORDER BY c.name, s.name`,
+    [parent.id]
+  )) as ParentClassRow[];
+
+  if (rows.length === 0) {
+    return res.json({ classes: [], count: 0 });
+  }
+
+  // Group by class_id
+  const byClass = new Map<string, {
+    class_id: string;
+    class_name: string;
+    schedule: string | null;
+    description: string | null;
+    teacher: { id: string; name: string; username: string } | null;
+    total_students: number;
+    my_children: { id: string; name: string; username: string; relationship: string | null }[];
+  }>();
+
+  for (const r of rows) {
+    let entry = byClass.get(r.class_id);
+    if (!entry) {
+      entry = {
+        class_id: r.class_id,
+        class_name: r.class_name,
+        schedule: r.schedule,
+        description: r.description,
+        teacher:
+          r.teacher_id && r.teacher_name && r.teacher_username
+            ? {
+                id: r.teacher_id,
+                name: r.teacher_name,
+                username: r.teacher_username,
+              }
+            : null,
+        total_students: r.total_students,
+        my_children: [],
+      };
+      byClass.set(r.class_id, entry);
+    }
+    entry.my_children.push({
+      id: r.student_id,
+      name: r.student_name,
+      username: r.student_username,
+      relationship: r.relationship,
+    });
+  }
+
+  // Parallel fetch stats per child (engagement + today)
+  const allChildIds = [...new Set(rows.map((r) => r.student_id))];
+  const childStats = new Map<
+    string,
+    { engagement: Awaited<ReturnType<typeof computeEngagement>>; today: Awaited<ReturnType<typeof getTodayActivity>> }
+  >();
+  await Promise.all(
+    allChildIds.map(async (sid) => {
+      const [engagement, today] = await Promise.all([
+        computeEngagement(sid),
+        getTodayActivity(sid),
+      ]);
+      childStats.set(sid, { engagement, today });
+    })
+  );
+
+  // Aggregate + build response
+  const classes = [...byClass.values()].map((entry) => {
+    let tasksDone = 0;
+    let minutes = 0;
+    let activeCount = 0;
+    const childrenWithStats = entry.my_children.map((child) => {
+      const stats = childStats.get(child.id)!;
+      const help = classifyNeedsHelp(stats.engagement);
+      tasksDone += stats.today.task_done_today;
+      minutes += stats.today.minutes_today;
+      if (stats.today.task_done_today > 0) activeCount++;
+      return {
+        ...child,
+        streak: stats.engagement.streak,
+        needs_help: help.needsHelp,
+      };
+    });
+
+    return {
+      id: entry.class_id,
+      name: entry.class_name,
+      schedule: entry.schedule,
+      description: entry.description,
+      teacher: entry.teacher,
+      total_students: entry.total_students,
+      my_children_count: entry.my_children.length,
+      my_children: childrenWithStats,
+      today: {
+        tasks_done: tasksDone,
+        minutes: minutes,
+        active_children: activeCount,
+      },
+    };
+  });
+
+  // Sort: lớp có con cần chú ý trước, sau đó theo tên
+  classes.sort((a, b) => {
+    const aAlert = a.my_children.some((c) => c.needs_help);
+    const bAlert = b.my_children.some((c) => c.needs_help);
+    if (aAlert !== bAlert) return aAlert ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  res.json({ classes, count: classes.length });
+});
