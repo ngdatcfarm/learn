@@ -1,6 +1,6 @@
 # Roadmap & Tiến độ dự án `thaoenglish/learn`
 
-> Cập nhật lần cuối: 2026-06-19 (Step 12b — Live Help Cấp 3 Highlight + Socket.io)
+> Cập nhật lần cuối: 2026-06-19 (Step 12c — Live Help Voice + Screen share)
 > Mục đích: Theo dõi các Step đã chốt, đang làm, và sắp tới — để mỗi lần quay lại trao đổi đều biết kế hoạch tới đâu.
 
 ---
@@ -114,7 +114,7 @@ fd56b29 feat: admin can manage parent-student links via EditUserModal
 
 ### Ưu tiên thấp
 - **Step 7+**: MySQL `GET_LOCK()` cho cron multi-instance (khi scale PM2 cluster)
-- **Step 12c**: Live Help Cấp 2 (Voice) + WebRTC (simple-peer + Google STUN)
+- **Step 12c TURN**: Thêm TURN server (coturn self-host hoặc Twilio NTS) nếu thực tế thấy P2P fail nhiều trên 4G/CGNAT
 
 > Đã drop: **Off-site backup** — server thuê dịch vụ đã cam kết backup sẵn, không cần tự lo.
 
