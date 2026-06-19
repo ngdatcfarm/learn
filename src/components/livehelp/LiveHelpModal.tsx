@@ -21,6 +21,7 @@ import { Field, inputStyle, inputClass } from "../ui/Field";
 import { useLiveHelp } from "./hooks/useLiveHelp";
 import { useLiveHelpSocket, type HighlightEvent } from "./hooks/useLiveHelpSocket";
 import { HighlightOverlay } from "./HighlightOverlay";
+import { VoiceCallPanel } from "./VoiceCallPanel";
 import type { LiveHelpHintMessage } from "../../api/client";
 
 export interface LiveHelpModalProps {
@@ -44,7 +45,7 @@ export function LiveHelpModal({ onClose }: LiveHelpModalProps) {
   }, [startPolling, stopPolling]);
 
   // Realtime socket
-  useLiveHelpSocket({
+  const { socket } = useLiveHelpSocket({
     sessionId: activeSession?.id,
     onHint: (h) => {
       // Append realtime message; hook sẽ dedupe theo id
@@ -228,6 +229,17 @@ export function LiveHelpModal({ onClose }: LiveHelpModalProps) {
             {ending ? "Đang kết thúc..." : "Tôi hiểu rồi"}
           </button>
         </div>
+
+        {/* Voice call (Step 12c) */}
+        {activeSession && activeSession.status !== "ended" && (
+          <VoiceCallPanel
+            socket={socket}
+            sessionId={activeSession.id}
+            selfRole="student"
+            selfName={activeSession.student_name}
+            peerName={activeSession.teacher_name}
+          />
+        )}
       </ModalShell>
 
       {/* Highlight overlay (realtime from teacher) */}

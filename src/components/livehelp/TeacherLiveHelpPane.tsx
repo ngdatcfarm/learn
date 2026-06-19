@@ -27,6 +27,7 @@ import {
   type LiveHelpOutcome,
 } from "../../api/client";
 import { useLiveHelpSocket } from "./hooks/useLiveHelpSocket";
+import { VoiceCallPanel } from "./VoiceCallPanel";
 
 const POLL_MS = 3000;
 
@@ -76,7 +77,7 @@ export function TeacherLiveHelpPane({ session, onClose, onEnded }: TeacherLiveHe
   }, [session.id]);
 
   // Realtime socket
-  useLiveHelpSocket({
+  const { socket } = useLiveHelpSocket({
     sessionId: session.id,
     onHint: (h) => {
       appendMessage({
@@ -366,6 +367,19 @@ export function TeacherLiveHelpPane({ session, onClose, onEnded }: TeacherLiveHe
             <MessageCircle className="w-3 h-3" />
             {ending ? "..." : "Đã giúp xong"}
           </button>
+        </div>
+      )}
+
+      {/* Voice call (Step 12c) */}
+      {session.status !== "ended" && (
+        <div className="p-3 border-t" style={{ borderColor: "var(--border-soft)" }}>
+          <VoiceCallPanel
+            socket={socket}
+            sessionId={session.id}
+            selfRole="teacher"
+            selfName={session.teacher_name}
+            peerName={session.student_name}
+          />
         </div>
       )}
     </motion.div>

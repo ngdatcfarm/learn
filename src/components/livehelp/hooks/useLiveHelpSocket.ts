@@ -74,6 +74,7 @@ export function useLiveHelpSocket(options: UseLiveHelpSocketOptions = {}) {
 
   const [connected, setConnected] = useState(false);
   const [joinedSessionId, setJoinedSessionId] = useState<string | null>(null);
+  const [socket, setSocket] = useState<Socket | null>(null);
   const socketRef = useRef<Socket | null>(null);
 
   // Refs để latest callbacks được dùng trong event handlers
@@ -98,6 +99,7 @@ export function useLiveHelpSocket(options: UseLiveHelpSocketOptions = {}) {
     });
 
     socketRef.current = socket;
+    setSocket(socket);
 
     socket.on("connect", () => {
       setConnected(true);
@@ -145,6 +147,7 @@ export function useLiveHelpSocket(options: UseLiveHelpSocketOptions = {}) {
     return () => {
       socket.disconnect();
       socketRef.current = null;
+      setSocket(null);
       setConnected(false);
       setJoinedSessionId(null);
     };
@@ -176,6 +179,7 @@ export function useLiveHelpSocket(options: UseLiveHelpSocketOptions = {}) {
   }, []);
 
   return {
+    socket,
     connected,
     joinedSessionId,
     joinSession,

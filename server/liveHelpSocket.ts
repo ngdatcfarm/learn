@@ -57,6 +57,34 @@ interface HighlightRow extends RowDataPacket {
   created_at: string;
 }
 
+interface AccessCheck {
+  ok: boolean;
+  status?: number;
+  error?: string;
+}
+
+/** Verify user (student/teacher) có phải member của session không. */
+async function verifySessionAccess(
+  sessionId: string,
+  user: SocketUser
+): Promise<AccessCheck> {
+  const session = await queryOne<SessionRow>(
+    `SELECT id, student_id, teacher_id, status FROM live_help_sessions WHERE id = ?`,
+    [sessionId]
+  );
+  if (!session) return { ok: false, status: 404, error: "Session not found" };
+  if (user.role === "student" && session.student_id !== user.id) {
+    return { ok: false, status: 403, error: "Forbidden" };
+  }
+  if (user.role === "teacher" && session.teacher_id !== user.id) {
+    return { ok: false, status: 403, error: "Forbidden" };
+  }
+  if (user.role !== "student" && user.role !== "teacher") {
+    return { ok: false, status: 403, error: "Role not allowed" };
+  }
+  return { ok: true };
+}
+
 /**
  * Init `/live-help` namespace — gọi 1 lần khi server boot.
  * Attach auth middleware + event handlers.
@@ -252,6 +280,69 @@ export function initLiveHelpSocket(): Namespace {
     // ---- disconnect ----
     socket.on("disconnect", (reason) => {
       console.log(`[live-help socket] ${user.role}/${user.id} disconnected: ${reason}`);
+      // Thông báo peer còn lại (nếu đang trong call) — giúp đối phương hangup sớm
+      // không phải đợi ICE timeout
+      for (const room of socket.rooms) {
+        if (room.startsWith("session:")) {
+          socket.to(room).emit("call:peer-left", {
+            sessionId: room.slice("session:".length),
+            user_id: user.id,
+            role: user.role,
+          });
+        }
+      }
+    });
+
+    // ============================================================
+    // WebRTC signaling — Voice + Screen share
+    // Pattern chung: verify access → forward tới peer kia trong room
+    // ============================================================
+
+    /** Helper: verify session access + forward payload tới peer kia trong room. */
+    async function forwardSignal(
+      eventName: string,
+      payload: { sessionId?: string; [k: string]: unknown }
+    ): Promise<void> {
+      const sessionId = payload?.sessionId;
+      if (!sessionId) {
+        socket.emit("error", { message: "Missing sessionId" });
+        return;
+      }
+      const access = await verifySessionAccess(sessionId, user);
+      if (access.ok === false) {
+        socket.emit("error", { message: access.error });
+        return;
+      }
+      // Forward tới peer kia (không gửi lại cho self)
+      socket.to(`session:${sessionId}`).emit(eventName, {
+        ...payload,
+        from: user.id,
+        from_role: user.role,
+      });
+    }
+
+    // ---- Voice signaling ----
+    socket.on("call:offer", (p) => forwardSignal("call:offer", p));
+    socket.on("call:answer", (p) => forwardSignal("call:answer", p));
+    socket.on("call:ice", (p) => forwardSignal("call:ice", p));
+    socket.on("call:hangup", (p) => forwardSignal("call:hangup", p));
+
+    // ---- Screen share signaling ----
+    // Chỉ HS mới được share (teacher chỉ nhận)
+    socket.on("call:screen-offer", async (p) => {
+      if (user.role !== "student") {
+        return socket.emit("error", { message: "Only student can share screen" });
+      }
+      await forwardSignal("call:screen-offer", p);
+    });
+    socket.on("call:screen-answer", (p) => { forwardSignal("call:screen-answer", p); });
+    socket.on("call:screen-ice", (p) => { forwardSignal("call:screen-ice", p); });
+    socket.on("call:screen-stop", async (p) => {
+      // Chỉ HS mới stop (cũng chỉ HS share)
+      if (user.role !== "student") {
+        return socket.emit("error", { message: "Only student can stop screen share" });
+      }
+      await forwardSignal("call:screen-stop", p);
     });
   });
 
