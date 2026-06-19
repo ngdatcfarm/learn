@@ -185,6 +185,8 @@ export function useVoiceCall({
         config: { iceServers },
       });
 
+      // Debug: log ICE candidates + state changes để diagnose NAT/TURN issue.
+      // Production: chỉ log ở console, không ảnh hưởng UX.
       peer.on("signal", (data) => {
         if (!socket || !sessionId) return;
         if (data.type === "offer") {
@@ -197,9 +199,33 @@ export function useVoiceCall({
       });
 
       peer.on("connect", () => {
+        console.log("[useVoiceCall] peer connected ✓");
         setStatus("connected");
         startDurationTimer();
       });
+
+      // ICE state diagnostics — log để biết browser chọn candidate nào.
+      // Dùng addEventListener (không ghi đè signaling của simple-peer).
+      const pc = (peer as any)._pc as RTCPeerConnection | undefined;
+      if (pc) {
+        pc.addEventListener("icecandidate", (e: any) => {
+          if (e.candidate) {
+            console.log(
+              `[useVoiceCall] ICE candidate: ${e.candidate.type}/${e.candidate.protocol} ${e.candidate.address}:${e.candidate.port}`
+            );
+          } else {
+            console.log("[useVoiceCall] ICE gathering complete");
+          }
+        });
+        pc.addEventListener("iceconnectionstatechange", () => {
+          console.log(
+            `[useVoiceCall] ICE connection state → ${pc.iceConnectionState}`
+          );
+        });
+        pc.addEventListener("connectionstatechange", () => {
+          console.log(`[useVoiceCall] peer connection state → ${pc.connectionState}`);
+        });
+      }
 
       peer.on("stream", (remote) => {
         setRemoteStream(remote);
