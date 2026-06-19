@@ -23,11 +23,15 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { Socket } from "socket.io-client";
 import SimplePeer from "simple-peer";
+import { getTurnCredentials } from "../../../api/client";
 
-const ICE_SERVERS: RTCIceServer[] = [
+const STUN_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
 ];
+
+/** ICE servers dùng khi chưa fetch được TURN credentials (STUN-only). */
+const FALLBACK_ICE_SERVERS: RTCIceServer[] = STUN_SERVERS;
 
 export type ScreenShareStatus = "idle" | "requesting" | "connected" | "stopped" | "error";
 
@@ -60,9 +64,40 @@ export function useScreenShare({
   const [error, setError] = useState<string | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [iceServers, setIceServers] = useState<RTCIceServer[]>(FALLBACK_ICE_SERVERS);
 
   const peerRef = useRef<SimplePeer.Instance | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+
+  // ============================================================
+  // Fetch TURN credentials on mount (cùng với useVoiceCall).
+  // ============================================================
+  useEffect(() => {
+    let cancelled = false;
+    getTurnCredentials()
+      .then((creds) => {
+        if (cancelled) return;
+        setIceServers([
+          ...STUN_SERVERS,
+          {
+            urls: creds.urls,
+            username: creds.username,
+            credential: creds.credential,
+          },
+        ]);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.warn(
+            "[useScreenShare] TURN credentials không khả dụng, dùng STUN-only:",
+            err
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // ============================================================
   // Cleanup
@@ -100,7 +135,7 @@ export function useScreenShare({
         initiator,
         trickle: true,
         stream,
-        config: { iceServers: ICE_SERVERS },
+        config: { iceServers },
       });
 
       peer.on("signal", (data) => {
@@ -137,7 +172,7 @@ export function useScreenShare({
 
       return peer;
     },
-    [socket, sessionId, isInitiator, cleanup]
+    [socket, sessionId, isInitiator, cleanup, iceServers]
   );
 
   // ============================================================

@@ -16,18 +16,25 @@
  *  - call:hangup   {sessionId, from, from_role}
  *  - call:peer-left {sessionId, user_id, role}  (từ server khi peer disconnect)
  *
- * STUN: Google miễn phí (đủ cho ~80% case). CGNAT fail → peer error → fallback text.
- * TURN: deferred (cần $$ server riêng).
+ * ICE servers:
+ *  - STUN Google miễn phí (mặc định — đủ cho cùng WiFi, NAT thường)
+ *  - TURN self-hosted (cfarm.vn coturn) — fetch qua /api/live/help/turn-credentials
+ *    cần thiết cho cross-network (4G, VPN, firewall). Nếu TURN chưa cấu hình
+ *    trên server → fallback STUN-only (peer error với symmetric NAT).
  */
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { Socket } from "socket.io-client";
 import SimplePeer from "simple-peer";
+import { getTurnCredentials } from "../../../api/client";
 
-const ICE_SERVERS: RTCIceServer[] = [
+const STUN_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
 ];
+
+/** ICE servers dùng khi chưa fetch được TURN credentials (STUN-only). */
+const FALLBACK_ICE_SERVERS: RTCIceServer[] = STUN_SERVERS;
 
 export type CallStatus = "idle" | "calling" | "incoming" | "connected" | "ended" | "error";
 
@@ -73,12 +80,45 @@ export function useVoiceCall({
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [durationSec, setDurationSec] = useState(0);
+  const [iceServers, setIceServers] = useState<RTCIceServer[]>(FALLBACK_ICE_SERVERS);
 
   const peerRef = useRef<SimplePeer.Instance | null>(null);
   const callStartRef = useRef<number | null>(null);
   const durationTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
   const pendingOfferRef = useRef<{ sdp: unknown; from: string } | null>(null);
+
+  // ============================================================
+  // Fetch TURN credentials on mount (cùng với khi socket connect).
+  // Nếu server chưa cấu hình TURN → fallback STUN-only.
+  // ============================================================
+  useEffect(() => {
+    let cancelled = false;
+    getTurnCredentials()
+      .then((creds) => {
+        if (cancelled) return;
+        setIceServers([
+          ...STUN_SERVERS,
+          {
+            urls: creds.urls,
+            username: creds.username,
+            credential: creds.credential,
+          },
+        ]);
+      })
+      .catch((err) => {
+        // 503 = TURN_SECRET/TURN_HOST chưa set trên server. Fallback STUN-only.
+        if (!cancelled) {
+          console.warn(
+            "[useVoiceCall] TURN credentials không khả dụng, dùng STUN-only:",
+            err
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // ============================================================
   // Cleanup
@@ -142,7 +182,7 @@ export function useVoiceCall({
         initiator,
         trickle: true,
         stream,
-        config: { iceServers: ICE_SERVERS },
+        config: { iceServers },
       });
 
       peer.on("signal", (data) => {
@@ -188,7 +228,7 @@ export function useVoiceCall({
 
       return peer;
     },
-    [socket, sessionId, startDurationTimer, cleanup]
+    [socket, sessionId, startDurationTimer, cleanup, iceServers]
   );
 
   // ============================================================

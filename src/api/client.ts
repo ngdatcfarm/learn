@@ -1247,3 +1247,20 @@ export async function liveHelpClearHighlight(
 ): Promise<{ ok: boolean }> {
   return request("POST", `/api/live/help/${sessionId}/highlight/clear`);
 }
+
+/**
+ * GET /api/live/help/turn-credentials
+ * Time-limited TURN credentials cho WebRTC ICE servers.
+ * Trả {urls, username, credential, ttl} — dùng để build RTCIceServer.
+ * Nếu server chưa cấu hình TURN_SECRET → throw 503 (fallback STUN-only).
+ */
+export interface TurnCredentials {
+  urls: string[];
+  username: string;
+  credential: string;
+  ttl: number;
+}
+
+export async function getTurnCredentials(): Promise<TurnCredentials> {
+  return request("GET", "/api/live/help/turn-credentials");
+}
