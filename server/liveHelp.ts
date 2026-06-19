@@ -117,7 +117,7 @@ async function autoAssignTeacher(studentId: string): Promise<string | null> {
     `SELECT c.teacher_id
      FROM class_members cm
      JOIN classes c ON c.id = cm.class_id
-     WHERE cm.student_id = ? AND c.deleted_at IS NULL AND c.teacher_id IS NOT NULL
+     WHERE cm.student_id = ? AND c.teacher_id IS NOT NULL
      ORDER BY cm.joined_at ASC
      LIMIT 1`,
     [studentId]
@@ -270,7 +270,7 @@ liveHelpRouter.post("/teacher-proactive", async (req: Request, res: Response) =>
     const inClass = await queryOne<RowDataPacket>(
       `SELECT 1 FROM class_members cm
        JOIN classes c ON c.id = cm.class_id
-       WHERE cm.student_id = ? AND c.teacher_id = ? AND c.deleted_at IS NULL
+       WHERE cm.student_id = ? AND c.teacher_id = ?
        LIMIT 1`,
       [student_id, teacher.id]
     );
@@ -299,7 +299,7 @@ liveHelpRouter.post("/teacher-proactive", async (req: Request, res: Response) =>
   const classRow = await queryOne<RowDataPacket & { class_id: string }>(
     `SELECT cm.class_id FROM class_members cm
      JOIN classes c ON c.id = cm.class_id
-     WHERE cm.student_id = ? AND c.teacher_id = ? AND c.deleted_at IS NULL
+     WHERE cm.student_id = ? AND c.teacher_id = ?
      ORDER BY cm.joined_at ASC LIMIT 1`,
     [student_id, teacher.id]
   );
