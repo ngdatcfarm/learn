@@ -203,10 +203,16 @@ export function useVoiceCall({
       peer.on("signal", (data) => {
         if (!socket || !sessionId) return;
         if (data.type === "offer") {
+          console.log("[useVoiceCall] → emit call:offer (signal type=offer)");
           socket.emit("call:offer", { sessionId, sdp: data });
         } else if (data.type === "answer") {
+          console.log("[useVoiceCall] → emit call:answer (signal type=answer)");
           socket.emit("call:answer", { sessionId, sdp: data });
         } else if ("candidate" in data && data.candidate) {
+          const c = data.candidate as RTCIceCandidateInit;
+          console.log(
+            `[useVoiceCall] → emit call:ice (${c.candidate?.slice(0, 40)}...)`
+          );
           socket.emit("call:ice", { sessionId, candidate: data });
         }
       });
@@ -362,6 +368,7 @@ export function useVoiceCall({
 
     const onOffer = (payload: { sessionId: string; sdp: any; from: string; from_role: string }) => {
       if (payload.sessionId !== sessionId) return;
+      console.log(`[useVoiceCall] ← call:offer from ${payload.from_role} (autoAnswer=${autoAnswer})`);
       // Bỏ qua nếu offer từ chính mình
       if (peerRef.current) return;
       pendingOfferRef.current = { sdp: payload.sdp, from: payload.from };
@@ -374,6 +381,7 @@ export function useVoiceCall({
 
     const onAnswer = (payload: { sessionId: string; sdp: any; from: string }) => {
       if (payload.sessionId !== sessionId) return;
+      console.log(`[useVoiceCall] ← call:answer from ${payload.from}`);
       if (peerRef.current) {
         peerRef.current.signal(payload.sdp);
       }
@@ -381,6 +389,8 @@ export function useVoiceCall({
 
     const onIce = (payload: { sessionId: string; candidate: any; from: string }) => {
       if (payload.sessionId !== sessionId) return;
+      const c = payload.candidate?.candidate || "";
+      console.log(`[useVoiceCall] ← call:ice (${c.slice(0, 40)}...)`);
       if (peerRef.current) {
         try { peerRef.current.signal(payload.candidate); } catch (e) {
           console.warn("[useVoiceCall] ICE signal failed:", e);
@@ -390,6 +400,7 @@ export function useVoiceCall({
 
     const onHangup = (payload: { sessionId: string; from: string }) => {
       if (payload.sessionId !== sessionId) return;
+      console.log(`[useVoiceCall] ← call:hangup from ${payload.from}`);
       if (peerRef.current) {
         try { peerRef.current.destroy(); } catch {}
         peerRef.current = null;
@@ -400,6 +411,7 @@ export function useVoiceCall({
 
     const onPeerLeft = (payload: { sessionId: string; user_id: string; role: string }) => {
       if (payload.sessionId !== sessionId) return;
+      console.log(`[useVoiceCall] ← call:peer-left (${payload.role} left)`);
       // Peer disconnect → kết thúc call (đỡ phải đợi ICE timeout)
       if (peerRef.current) {
         try { peerRef.current.destroy(); } catch {}
