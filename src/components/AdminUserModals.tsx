@@ -473,6 +473,16 @@ function RelationshipsSection({ user }: { user: AdminUser }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [candidates, setCandidates] = useState<AdminUser[]>([]);
+  // Auto-suggest theo họ (vd: HS "Nguyễn Văn A" → gợi ý PH họ "Nguyễn")
+  const [suggestions, setSuggestions] = useState<AdminUser[]>([]);
+
+  /**
+   * Tách họ (first word) từ tên tiếng Việt. Nếu tên có 1 từ thì dùng cả từ đó.
+   * Ví dụ: "Nguyễn Văn A" → "Nguyễn", "Trần" → "Trần".
+   * Bỏ qua nếu quá ngắn (<2 char) để tránh false positives.
+   */
+  const surname = user.name.trim().split(/\s+/)[0] || "";
+  const hasUsableSurname = surname.length >= 2;
 
   // Load current links
   const refetch = async () => {
@@ -513,6 +523,36 @@ function RelationshipsSection({ user }: { user: AdminUser }) {
       clearTimeout(t);
     };
   }, [pickerOpen, search, oppositeRole, isParent]);
+
+  // Auto-suggest theo họ khi picker mở + search trống. Clear khi user gõ vào ô search.
+  useEffect(() => {
+    if (!pickerOpen || search || !hasUsableSurname) {
+      setSuggestions([]);
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        const u = await adminListUsers({
+          role: oppositeRole,
+          search: surname,
+          parentless: isParent,
+        });
+        if (!cancelled) {
+          // Loại bỏ chính user đang edit + đã linked (đã được loại ở dưới)
+          const ids = new Set([user.id, ...linked.map((l) => l.id)]);
+          setSuggestions((u.users ?? []).filter((c) => !ids.has(c.id)).slice(0, 5));
+        }
+      } catch (e) {
+        console.warn("Suggest fetch failed:", e);
+        if (!cancelled) setSuggestions([]);
+      }
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [pickerOpen, search, surname, hasUsableSurname, oppositeRole, isParent, user.id, linked]);
 
   const handleAdd = async (
     candidateId: string,
@@ -602,29 +642,51 @@ function RelationshipsSection({ user }: { user: AdminUser }) {
             style={inputStyle}
             autoFocus
           />
-          <div className="max-h-56 overflow-y-auto space-y-1">
-            {availableCandidates.length === 0 ? (
-              <p
-                className="text-xs text-center py-3 font-bold"
+          {!search && suggestions.length > 0 && (
+            <div className="space-y-1.5">
+              <div
+                className="text-[10px] font-extrabold uppercase tracking-wider flex items-center gap-1"
                 style={{ color: "var(--muted-strong)" }}
               >
-                {search
-                  ? `Không tìm thấy "${search}".`
-                  : candidates.length === 0
-                    ? "Đang tải danh sách..."
-                    : isParent
-                      ? "Không có học sinh nào chưa có phụ huynh. Tất cả học sinh đã được liên kết với PH khác, hoặc bạn có thể tạo HS mới."
-                      : `Tất cả ${oppositeLabel} đã được liên kết với HS/PH này.`}
-              </p>
-            ) : (
-              availableCandidates.slice(0, 20).map((c) => (
-                <PickerCandidate
-                  key={c.id}
-                  candidate={c}
-                  onAdd={handleAdd}
-                />
-              ))
-            )}
+                <span>💡</span>
+                <span>Gợi ý theo họ "{surname}"</span>
+              </div>
+              {suggestions.map((c) => (
+                <PickerCandidate key={c.id} candidate={c} onAdd={handleAdd} />
+              ))}
+            </div>
+          )}
+          <div className={!search && suggestions.length > 0 ? "pt-2 border-t" : ""} style={!search && suggestions.length > 0 ? { borderColor: "var(--border-soft)" } : undefined}>
+            <div
+              className="text-[10px] font-extrabold uppercase tracking-wider mb-1.5"
+              style={{ color: "var(--muted-strong)" }}
+            >
+              {search ? "Kết quả tìm kiếm" : "Tất cả"}
+            </div>
+            <div className="max-h-56 overflow-y-auto space-y-1">
+              {availableCandidates.length === 0 ? (
+                <p
+                  className="text-xs text-center py-3 font-bold"
+                  style={{ color: "var(--muted-strong)" }}
+                >
+                  {search
+                    ? `Không tìm thấy "${search}".`
+                    : candidates.length === 0
+                      ? "Đang tải danh sách..."
+                      : isParent
+                        ? "Không có học sinh nào chưa có phụ huynh. Tất cả học sinh đã được liên kết với PH khác, hoặc bạn có thể tạo HS mới."
+                        : `Tất cả ${oppositeLabel} đã được liên kết với HS/PH này.`}
+                </p>
+              ) : (
+                availableCandidates.slice(0, 20).map((c) => (
+                  <PickerCandidate
+                    key={c.id}
+                    candidate={c}
+                    onAdd={handleAdd}
+                  />
+                ))
+              )}
+            </div>
           </div>
         </div>
       )}
