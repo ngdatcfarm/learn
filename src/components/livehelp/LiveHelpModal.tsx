@@ -38,6 +38,13 @@ export function LiveHelpModal({ onClose }: LiveHelpModalProps) {
     return () => stopPolling();
   }, [startPolling, stopPolling]);
 
+  // Auto-close khi session kết thúc (GV đã end qua API, poll detect status='ended')
+  useEffect(() => {
+    if (activeSession && activeSession.status === "ended") {
+      onClose();
+    }
+  }, [activeSession, onClose]);
+
   // Auto-scroll to bottom on new messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });

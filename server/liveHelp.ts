@@ -478,9 +478,10 @@ liveHelpRouter.post("/:id/end", async (req: Request, res: Response) => {
 /**
  * GET /api/live/help/queue
  * Teacher: list pending + active sessions mình phụ trách.
+ * Admin dùng audit_log để oversight — không expose queue ở Slice A.
  */
 liveHelpRouter.get("/queue", async (req: Request, res: Response) => {
-  const teacher = await requireRole(req, res, ["teacher", "admin"]);
+  const teacher = await requireRole(req, res, ["teacher"]);
   if (!teacher) return;
 
   const rows = await query<SessionRow[]>(
