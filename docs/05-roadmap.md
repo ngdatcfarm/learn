@@ -1,6 +1,6 @@
 # Roadmap & Tiến độ dự án `thaoenglish/learn`
 
-> Cập nhật lần cuối: 2026-06-18 (thêm Step 10d)
+> Cập nhật lần cuối: 2026-06-19 (thêm Step 10e)
 > Mục đích: Theo dõi các Step đã chốt, đang làm, và sắp tới — để mỗi lần quay lại trao đổi đều biết kế hoạch tới đâu.
 
 ---
@@ -32,6 +32,7 @@
 | **10a** | **Backup tự động (in-process mysqldump + gzip + rotate 7)** | ✅ **Done 2026-06-18** | xem `docs/04-deploy-cfarm.md` |
 | **10c** | **Force change password (v6 migration)** | ✅ **Done 2026-06-18** | Commit `65d4716` — `must_change_password` flag, login trả `mustChangePassword`, new `/api/auth/change-password-first` endpoint. Admin quản lý toàn bộ pass. |
 | **10d** | **Voluntary change password** | ✅ **Done 2026-06-18** | Commit `037a7b9` — `PATCH /api/me/password` (verify current + set new). ProfileModal thêm nút "🔑 Đổi mật khẩu" → ChangePasswordModal overlay (3 trường + toggle show/hide). KHÔNG kill sessions (khác admin reset). Refactor: extract `verifyPassword` (timing-safe scrypt) từ auth.ts → `server/passwords.ts`. |
+| **10e** | **Bulk import users via CSV** | ✅ **Done 2026-06-19** | Commit `b0cfdfe` — `POST /api/admin/users/import` (CSV parse → validate → multi-row INSERT chunked 500 rows). Atomic: any row error → 400 với errors[], nothing inserted. CSV columns: username, name, role (required) + password, level, cefr_level, goal, daily_goal_minutes, phone (optional). Password optional → auto-gen temp + `must_change_password=1`. 5MB cap. UI: AdminDashboard "Import CSV" button → ImportUsersModal (file upload OR paste + template + copyable temp password table). Refactor: extract `parseAndValidateImport()` helper + `VALID_DAILY_GOALS` constant. |
 | **11** | **Streak protection + daily nudge (v7 migration)** | ✅ **Done 2026-06-18** | Commit `b16cc7b` — 2 cron jobs: `streak_freeze` (00:05 auto-apply) + `streakNudge` (19:00 gửi inbox cho PH+GV). `computeEngagement` consult `streak_freezes` để streak không gap khi auto-freeze. Bug fixes: drop `subject` field trên direct-thread INSERT + fix timezone mismatch UTC↔local. Refactor: extract `sendDirectMessage` (messaging.ts) + `isInTimeWindow/formatDateLocal` (`server/utils/time.ts`). Xem `step11-streak-protection.md`. |
 
 ---
@@ -104,16 +105,17 @@ fd56b29 feat: admin can manage parent-student links via EditUserModal
   - Test với 1 PH trước khi rollout
 
 ### Ưu tiên trung bình
-- *(hiện trống — voluntary change password đã done Step 10d)*
+- *(hiện trống — bulk import CSV đã done Step 10e)*
 
 ### Ưu tiên thấp
 - **Step 7+**: MySQL `GET_LOCK()` cho cron multi-instance (khi scale PM2 cluster)
 - **Relationship dropdown** cố định (mother/father/guardian/other) thay vì free-text
-- **Bulk import users** từ CSV
 - **PH multi-class view** (hiện PH chỉ thấy từng con, không tổng hợp theo lớp)
 - **Auto-suggest PH/HS theo tên con** trong picker
 - **Lịch sử liên kết PH ↔ HS** (soft-delete + restore UI)
 - **HS bulk add vào lớp** (giống bulk PH link)
+- **Bulk import classes + class_members** qua CSV (tương tự Step 10e nhưng cho lớp)
+- **parent_username column** trong CSV để auto-link PH ↔ HS khi import student
 
 > Đã drop: **Off-site backup** — server thuê dịch vụ đã cam kết backup sẵn, không cần tự lo.
 
