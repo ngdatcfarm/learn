@@ -22,6 +22,7 @@ import { useLiveHelp } from "./hooks/useLiveHelp";
 import { useLiveHelpSocket, type HighlightEvent } from "./hooks/useLiveHelpSocket";
 import { HighlightOverlay } from "./HighlightOverlay";
 import { VoiceCallPanel } from "./VoiceCallPanel";
+import { ScreenSharePanel } from "./ScreenSharePanel";
 import type { LiveHelpHintMessage } from "../../api/client";
 
 export interface LiveHelpModalProps {
@@ -238,6 +239,15 @@ export function LiveHelpModal({ onClose }: LiveHelpModalProps) {
             selfRole="student"
             selfName={activeSession.student_name}
             peerName={activeSession.teacher_name}
+          />
+        )}
+
+        {/* Screen share (Step 12c Phase 2) */}
+        {activeSession && activeSession.status !== "ended" && (
+          <ScreenSharePanel
+            socket={socket}
+            sessionId={activeSession.id}
+            selfRole="student"
           />
         )}
       </ModalShell>

@@ -28,6 +28,7 @@ import {
 } from "../../api/client";
 import { useLiveHelpSocket } from "./hooks/useLiveHelpSocket";
 import { VoiceCallPanel } from "./VoiceCallPanel";
+import { ScreenSharePanel } from "./ScreenSharePanel";
 
 const POLL_MS = 3000;
 
@@ -372,13 +373,18 @@ export function TeacherLiveHelpPane({ session, onClose, onEnded }: TeacherLiveHe
 
       {/* Voice call (Step 12c) */}
       {session.status !== "ended" && (
-        <div className="p-3 border-t" style={{ borderColor: "var(--border-soft)" }}>
+        <div className="p-3 border-t space-y-2" style={{ borderColor: "var(--border-soft)" }}>
           <VoiceCallPanel
             socket={socket}
             sessionId={session.id}
             selfRole="teacher"
             selfName={session.teacher_name}
             peerName={session.student_name}
+          />
+          <ScreenSharePanel
+            socket={socket}
+            sessionId={session.id}
+            selfRole="teacher"
           />
         </div>
       )}
