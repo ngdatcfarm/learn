@@ -24,6 +24,7 @@ import sound from "../utils/sound";
 import SkillCard from "./ui/SkillCard";
 import KpiCard from "./ui/KpiCard";
 import { Field, inputStyle, inputClass } from "./ui/Field";
+import { RELATIONSHIP_LABEL } from "../utils/roles";
 
 type Section = "overview" | "settings";
 
@@ -139,7 +140,7 @@ function ChildTab({ child }: { child: ParentChild }) {
                   borderColor: "var(--primary)",
                 }}
               >
-                {child.relationship || "Con"}
+                {(child.relationship && RELATIONSHIP_LABEL[child.relationship]) || "Con"}
               </span>
             </div>
             <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">

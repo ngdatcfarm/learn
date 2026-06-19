@@ -33,6 +33,7 @@ import {
   DailyGoalMinutes,
   RelationshipValue,
 } from "../utils/roles";
+// RELATIONSHIP_LABEL dùng để hiển thị relationship (vd: "mother" → "👩 Mẹ") trong ManageMembersModal.
 
 // Re-export ModalShell for backward compat (some files import from here)
 export { ModalShell };
@@ -515,13 +516,13 @@ function RelationshipsSection({ user }: { user: AdminUser }) {
 
   const handleAdd = async (
     candidateId: string,
-    relationship: string
+    relationship: RelationshipValue | ""
   ): Promise<void> => {
     try {
-      const payload: { parent_id: string; student_id: string; relationship?: string } = isStudent
+      const payload: { parent_id: string; student_id: string; relationship?: RelationshipValue } = isStudent
         ? { parent_id: candidateId, student_id: user.id }
         : { parent_id: user.id, student_id: candidateId };
-      if (relationship.trim()) payload.relationship = relationship.trim();
+      if (relationship) payload.relationship = relationship;
       await adminAddParentLink(payload);
       sound.playSuccess();
       setPickerOpen(false);
@@ -672,7 +673,7 @@ function RelationshipsSection({ user }: { user: AdminUser }) {
                       color: "var(--primary)",
                     }}
                   >
-                    {l.relationship}
+                    {RELATIONSHIP_LABEL[l.relationship] || l.relationship}
                   </span>
                 )}
                 <button
@@ -701,10 +702,10 @@ function PickerCandidate({
   onAdd,
 }: {
   candidate: AdminUser;
-  onAdd: (id: string, relationship: string) => Promise<void>;
+  onAdd: (id: string, relationship: RelationshipValue | "") => Promise<void>;
   key?: string | number;
 }) {
-  const [relationship, setRelationship] = useState("");
+  const [relationship, setRelationship] = useState<RelationshipValue | "">("");
   return (
     <div
       className="px-3 py-2 rounded-xl flex items-center gap-2"
@@ -717,14 +718,19 @@ function PickerCandidate({
           {candidate.cefr_level ? ` · ${candidate.cefr_level}` : ""}
         </div>
       </div>
-      <input
+      <select
         value={relationship}
-        onChange={(e) => setRelationship(e.target.value)}
-        placeholder="Quan hệ"
-        maxLength={16}
-        className={inputClass("w-20 px-2 py-1 text-[10px]")}
+        onChange={(e) => setRelationship(e.target.value as RelationshipValue | "")}
+        className={inputClass("px-2 py-1 text-[10px]")}
         style={inputStyle}
-      />
+      >
+        <option value="">Quan hệ…</option>
+        {RELATIONSHIP_OPTIONS.map((r) => (
+          <option key={r.value} value={r.value}>
+            {r.emoji} {r.label}
+          </option>
+        ))}
+      </select>
       <button
         onClick={() => onAdd(candidate.id, relationship)}
         className="text-[10px] font-extrabold px-2 py-1 rounded-lg shrink-0"

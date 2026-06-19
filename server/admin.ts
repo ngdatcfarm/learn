@@ -43,6 +43,7 @@ import {
   VALID_CEFR,
   VALID_GOALS,
   VALID_DAILY_GOALS,
+  VALID_RELATIONSHIPS,
   PHONE_REGEX,
   USERNAME_REGEX,
   USERNAME_MAX_LENGTH,
@@ -256,13 +257,16 @@ adminRouter.post("/parent-links", async (req: Request, res: Response) => {
       .json({ error: "student_id không hợp lệ (không phải HS hoặc đã xóa)." });
   }
 
-  // Relationship (optional, max 16 chars theo schema)
-  const relValue =
-    relationship == null || relationship === ""
-      ? null
-      : String(relationship).trim();
-  if (relValue && relValue.length > 16) {
-    return res.status(400).json({ error: "relationship tối đa 16 ký tự." });
+  // Relationship (optional, fixed vocab — mother/father/guardian/other)
+  // null nếu không chọn. Validate trước khi insert để tránh typo như "mae" hay "me".
+  let relValue: string | null = null;
+  if (relationship != null && relationship !== "") {
+    relValue = String(relationship).trim();
+    if (!VALID_RELATIONSHIPS.includes(relValue as typeof VALID_RELATIONSHIPS[number])) {
+      return res.status(400).json({
+        error: `relationship không hợp lệ: "${relValue}". Chỉ chấp nhận: ${VALID_RELATIONSHIPS.join(", ")}.`,
+      });
+    }
   }
 
   // Duplicate check
