@@ -37,6 +37,19 @@ import { requireRole, AuthUser } from "./auth";
 import { logAudit } from "./audit";
 import { hashPassword, generateTempPassword } from "./passwords";
 import { sendZaloMessage } from "./zalo";
+import {
+  VALID_ROLES,
+  VALID_LEVELS,
+  VALID_CEFR,
+  VALID_GOALS,
+  VALID_DAILY_GOALS,
+  PHONE_REGEX,
+  USERNAME_REGEX,
+  USERNAME_MAX_LENGTH,
+  NAME_MAX_LENGTH,
+  MAX_CSV_BYTES,
+  BULK_INSERT_CHUNK,
+} from "./constants";
 
 export const adminRouter = Router();
 
@@ -299,42 +312,56 @@ adminRouter.delete(
   }
 );
 
-const VALID_ROLES = ["student", "parent", "teacher", "admin"] as const;
-const PHONE_REGEX = /^\+?\d{9,15}$/;
-
-function pickUserFields(body: any): {
-  name?: string;
-  level?: string | null;
-  cefr_level?: string | null;
-  goal?: string | null;
-  daily_goal_minutes?: number | null;
-  phone?: string | null;
-  must_change_password?: number;
+/**
+ * Validate + extract updatable user fields từ request body.
+ * Trả về { fields, errors } — nếu errors.length > 0 thì caller trả 400.
+ * KHÔNG throw — để caller quyết định UX (single user → 400 với error đầu tiên;
+ * CSV import → collect tất cả errors trước khi quyết định).
+ */
+function validateUserFields(body: any): {
+  fields: {
+    name?: string;
+    level?: string | null;
+    cefr_level?: string | null;
+    goal?: string | null;
+    daily_goal_minutes?: number | null;
+    phone?: string | null;
+    must_change_password?: number;
+  };
+  errors: string[];
 } {
-  const out: any = {};
-  if (body.name !== undefined) out.name = String(body.name).trim();
-  if (body.level !== undefined) out.level = body.level || null;
-  if (body.cefr_level !== undefined) out.cefr_level = body.cefr_level || null;
-  if (body.goal !== undefined) out.goal = body.goal || null;
+  const fields: any = {};
+  const errors: string[] = [];
+
+  if (body.name !== undefined) fields.name = String(body.name).trim();
+  if (body.level !== undefined) fields.level = body.level || null;
+  if (body.cefr_level !== undefined) fields.cefr_level = body.cefr_level || null;
+  if (body.goal !== undefined) fields.goal = body.goal || null;
+
   if (body.daily_goal_minutes !== undefined) {
     const n = Number(body.daily_goal_minutes);
-    if (![5, 15, 30].includes(n)) {
-      throw new Error("daily_goal_minutes phải là 5, 15 hoặc 30.");
+    if (!VALID_DAILY_GOALS.includes(n as 5 | 15 | 30)) {
+      errors.push("daily_goal_minutes phải là 5, 15 hoặc 30.");
+    } else {
+      fields.daily_goal_minutes = n;
     }
-    out.daily_goal_minutes = n;
   }
+
   if (body.phone !== undefined) {
     // Empty string → null (xóa SĐT). Match profile.ts semantics.
     const normalized = body.phone === "" ? null : body.phone;
     if (normalized !== null && !PHONE_REGEX.test(String(normalized))) {
-      throw new Error("Số điện thoại không hợp lệ (9-15 chữ số, có thể có + ở đầu).");
+      errors.push("Số điện thoại không hợp lệ (9-15 chữ số, có thể có + ở đầu).");
+    } else {
+      fields.phone = normalized === null ? null : String(normalized);
     }
-    out.phone = normalized === null ? null : String(normalized);
   }
+
   if (body.must_change_password !== undefined) {
-    out.must_change_password = body.must_change_password ? 1 : 0;
+    fields.must_change_password = body.must_change_password ? 1 : 0;
   }
-  return out;
+
+  return { fields, errors };
 }
 
 adminRouter.post("/users", async (req: Request, res: Response) => {
@@ -363,10 +390,10 @@ adminRouter.post("/users", async (req: Request, res: Response) => {
   }
 
   let fields: any;
-  try {
-    fields = pickUserFields(req.body);
-  } catch (e: any) {
-    return res.status(400).json({ error: e.message });
+  let fieldErrors: string[];
+  ({ fields, errors: fieldErrors } = validateUserFields(req.body));
+  if (fieldErrors.length > 0) {
+    return res.status(400).json({ error: fieldErrors[0] });
   }
 
   const id = crypto.randomUUID();
@@ -424,10 +451,10 @@ adminRouter.patch("/users/:id", async (req: Request, res: Response) => {
   if (!existing) return res.status(404).json({ error: "Người dùng không tồn tại." });
 
   let fields: any;
-  try {
-    fields = pickUserFields(req.body);
-  } catch (e: any) {
-    return res.status(400).json({ error: e.message });
+  let fieldErrors: string[];
+  ({ fields, errors: fieldErrors } = validateUserFields(req.body));
+  if (fieldErrors.length > 0) {
+    return res.status(400).json({ error: fieldErrors[0] });
   }
   if (Object.keys(fields).length === 0) {
     return res.status(400).json({ error: "Không có trường nào để cập nhật." });
@@ -597,16 +624,6 @@ adminRouter.post(
 // ============================================================
 
 /**
- * Cap cho CSV payload (5 MB) — đủ cho ~10-20k rows. Tránh OOM nếu admin
- * upload file quá lớn nhầm. Express body limit mặc định là 100 KB nên
- * admin sẽ thấy 413 — set riêng cho endpoint này thân thiện hơn.
- */
-const MAX_CSV_BYTES = 5 * 1024 * 1024;
-
-/** Chunk size cho bulk INSERT — mỗi row ~250 byte → 500 rows ≈ 125 KB, an toàn dưới max_allowed_packet (16 MB). */
-const INSERT_CHUNK = 500;
-
-/**
  * Minimal CSV parser hỗ trợ:
  *   - Quoted fields: "Nguyễn, Văn A"
  *   - Escaped quote: "" → "
@@ -688,36 +705,31 @@ interface ImportRow {
   phone: string | null;
 }
 
-const VALID_LEVELS = ["Beginner", "Intermediate", "Advanced"];
-const VALID_CEFR = ["A1", "A2", "B1", "B2", "C1", "C2"];
-const VALID_GOALS = ["IELTS", "Giao tiếp", "Học thuật", "Tổng quát"];
-/** Mirror src/utils/roles.ts DAILY_GOAL_OPTIONS — server không import FE file. */
-const VALID_DAILY_GOALS = [5, 15, 30] as const;
-
 /**
- * Validate 1 row. Trả về string error hoặc null nếu OK.
+ * Validate 1 CSV row. Trả về string error hoặc null nếu OK.
+ * Dùng chung constants từ `./constants` — single source of truth với single-user flow.
  */
 function validateImportRow(row: ImportRow): string | null {
   if (!row.username) return "Thiếu username";
-  if (row.username.length > 64) return "username quá dài (>64)";
-  if (!/^[a-zA-Z0-9_.-]+$/.test(row.username)) {
+  if (row.username.length > USERNAME_MAX_LENGTH) return `username quá dài (>${USERNAME_MAX_LENGTH})`;
+  if (!USERNAME_REGEX.test(row.username)) {
     return "username chỉ chứa chữ, số, _, ., -";
   }
   if (!row.name) return "Thiếu name";
-  if (row.name.length > 128) return "name quá dài (>128)";
+  if (row.name.length > NAME_MAX_LENGTH) return `name quá dài (>${NAME_MAX_LENGTH})`;
   if (!VALID_ROLES.some((r) => r === row.role)) {
     return `role không hợp lệ: ${row.role}`;
   }
   if (row.password && row.password.length < 4) {
     return "password quá ngắn (tối thiểu 4 ký tự)";
   }
-  if (row.level && !VALID_LEVELS.includes(row.level)) {
+  if (row.level && !VALID_LEVELS.includes(row.level as typeof VALID_LEVELS[number])) {
     return `level không hợp lệ: ${row.level}`;
   }
-  if (row.cefr_level && !VALID_CEFR.includes(row.cefr_level)) {
+  if (row.cefr_level && !VALID_CEFR.includes(row.cefr_level as typeof VALID_CEFR[number])) {
     return `cefr_level không hợp lệ: ${row.cefr_level}`;
   }
-  if (row.goal && !VALID_GOALS.includes(row.goal)) {
+  if (row.goal && !VALID_GOALS.includes(row.goal as typeof VALID_GOALS[number])) {
     return `goal không hợp lệ: ${row.goal}`;
   }
   if (row.daily_goal_minutes !== null && !VALID_DAILY_GOALS.includes(row.daily_goal_minutes as 5 | 15 | 30)) {
@@ -898,8 +910,8 @@ adminRouter.post("/users/import", async (req: Request, res: Response) => {
   // Multi-row INSERT theo chunk. Tránh N+1 round-trips (1 round-trip / 500 rows
   // thay vì 1 round-trip / row). Cùng transaction để giữ atomicity.
   await withTransaction(async (conn) => {
-    for (let i = 0; i < prepared.length; i += INSERT_CHUNK) {
-      const chunk = prepared.slice(i, i + INSERT_CHUNK);
+    for (let i = 0; i < prepared.length; i += BULK_INSERT_CHUNK) {
+      const chunk = prepared.slice(i, i + BULK_INSERT_CHUNK);
       const placeholders = chunk.map(() => "(?,?,?,?,?,?,?,?,?,?,?,?)").join(",");
       const params: any[] = [];
       for (const c of chunk) {

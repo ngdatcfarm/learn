@@ -23,7 +23,16 @@ import {
 } from "../api/client";
 import { Field, inputStyle, inputClass } from "./ui/Field";
 import { ModalShell } from "./ui/ModalShell";
-import { DAILY_GOAL_OPTIONS, DailyGoalMinutes } from "../utils/roles";
+import {
+  DAILY_GOAL_OPTIONS,
+  CEFR_LEVELS,
+  SKILL_LEVELS,
+  GOAL_OPTIONS,
+  RELATIONSHIP_OPTIONS,
+  RELATIONSHIP_LABEL,
+  DailyGoalMinutes,
+  RelationshipValue,
+} from "../utils/roles";
 
 // Re-export ModalShell for backward compat (some files import from here)
 export { ModalShell };
@@ -181,9 +190,9 @@ export function CreateUserModal({
                   className={inputClass()}
                   style={inputStyle}
                 >
-                  <option>Beginner</option>
-                  <option>Intermediate</option>
-                  <option>Advanced</option>
+                  {SKILL_LEVELS.map((l) => (
+                    <option key={l}>{l}</option>
+                  ))}
                 </select>
               </Field>
               <Field label="CEFR">
@@ -193,12 +202,9 @@ export function CreateUserModal({
                   className={inputClass()}
                   style={inputStyle}
                 >
-                  <option>A1</option>
-                  <option>A2</option>
-                  <option>B1</option>
-                  <option>B2</option>
-                  <option>C1</option>
-                  <option>C2</option>
+                  {CEFR_LEVELS.map((c) => (
+                    <option key={c}>{c}</option>
+                  ))}
                 </select>
               </Field>
             </div>
@@ -210,10 +216,9 @@ export function CreateUserModal({
                   className={inputClass()}
                   style={inputStyle}
                 >
-                  <option>IELTS</option>
-                  <option>Giao tiếp</option>
-                  <option>Học thuật</option>
-                  <option>Tổng quát</option>
+                  {GOAL_OPTIONS.map((g) => (
+                    <option key={g.value} value={g.value}>{g.label}</option>
+                  ))}
                 </select>
               </Field>
               <Field label="Phút/ngày">
@@ -376,9 +381,9 @@ export function EditUserModal({
                     className={inputClass()}
                     style={inputStyle}
                   >
-                    <option>Beginner</option>
-                    <option>Intermediate</option>
-                    <option>Advanced</option>
+                    {SKILL_LEVELS.map((l) => (
+                      <option key={l}>{l}</option>
+                    ))}
                   </select>
                 </Field>
                 <Field label="CEFR">
@@ -388,12 +393,9 @@ export function EditUserModal({
                     className={inputClass()}
                     style={inputStyle}
                   >
-                    <option>A1</option>
-                    <option>A2</option>
-                    <option>B1</option>
-                    <option>B2</option>
-                    <option>C1</option>
-                    <option>C2</option>
+                    {CEFR_LEVELS.map((c) => (
+                      <option key={c}>{c}</option>
+                    ))}
                   </select>
                 </Field>
               </div>
@@ -405,10 +407,9 @@ export function EditUserModal({
                     className={inputClass()}
                     style={inputStyle}
                   >
-                    <option>IELTS</option>
-                    <option>Giao tiếp</option>
-                    <option>Học thuật</option>
-                    <option>Tổng quát</option>
+                    {GOAL_OPTIONS.map((g) => (
+                      <option key={g.value} value={g.value}>{g.label}</option>
+                    ))}
                   </select>
                 </Field>
                 <Field label="Phút/ngày">

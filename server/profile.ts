@@ -16,10 +16,9 @@ import { query, queryOne, ResultSetHeader, RowDataPacket } from "../db/client";
 import { requireUser } from "./auth";
 import { logAudit } from "./audit";
 import { verifyPassword, hashPassword } from "./passwords";
+import { PHONE_REGEX } from "./constants";
 
 export const profileRouter = Router();
-
-const PHONE_REGEX = /^\+?\d{9,15}$/;
 
 /**
  * PATCH /api/me/phone
