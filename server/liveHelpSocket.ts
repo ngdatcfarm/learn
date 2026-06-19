@@ -67,6 +67,7 @@ export function initLiveHelpSocket(): Namespace {
 
   // ============================================================
   // Auth middleware — verify apex_auth_token từ handshake
+  // Gộp user info + expiry trong 1 query.
   // ============================================================
   liveHelpNs.use(async (socket, next) => {
     try {
@@ -74,8 +75,8 @@ export function initLiveHelpSocket(): Namespace {
       if (!token) {
         return next(new Error("Missing auth token"));
       }
-      const session = await queryOne<RowDataPacket & SocketUser>(
-        `SELECT u.id, u.role
+      const session = await queryOne<RowDataPacket & SocketUser & { expires_at: string }>(
+        `SELECT u.id, u.role, s.expires_at
          FROM auth_sessions s
          JOIN users u ON u.id = s.user_id
          WHERE s.token = ? AND u.deleted_at IS NULL`,
@@ -84,17 +85,10 @@ export function initLiveHelpSocket(): Namespace {
       if (!session) {
         return next(new Error("Invalid auth token"));
       }
-      if (new Date().getTime() > Date.now()) {
-        // Check expiry
-        const expRow = await queryOne<RowDataPacket & { expires_at: string }>(
-          `SELECT expires_at FROM auth_sessions WHERE token = ?`,
-          [token]
-        );
-        if (expRow && new Date(expRow.expires_at).getTime() < Date.now()) {
-          return next(new Error("Session expired"));
-        }
+      if (new Date(session.expires_at).getTime() < Date.now()) {
+        return next(new Error("Session expired"));
       }
-      socket.data.user = session;
+      socket.data.user = { id: session.id, role: session.role };
       next();
     } catch (err: any) {
       next(new Error("Auth check failed: " + err.message));

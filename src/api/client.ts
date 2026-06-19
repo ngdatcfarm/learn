@@ -1220,3 +1220,30 @@ export async function liveHelpMessages(sessionId: string): Promise<{
 }> {
   return request("GET", `/api/live/help/${sessionId}/messages`);
 }
+
+export interface LiveHelpHighlight {
+  id: string;
+  session_id: string;
+  teacher_id: string;
+  selector: string;
+  color: string;
+  note: string | null;
+  created_at: string;
+}
+
+export async function liveHelpSendHighlight(
+  sessionId: string,
+  selector: string,
+  note?: string | null
+): Promise<{ ok: boolean; highlight: LiveHelpHighlight }> {
+  return request("POST", `/api/live/help/${sessionId}/highlight`, {
+    selector,
+    note: note ?? null,
+  });
+}
+
+export async function liveHelpClearHighlight(
+  sessionId: string
+): Promise<{ ok: boolean }> {
+  return request("POST", `/api/live/help/${sessionId}/highlight/clear`);
+}

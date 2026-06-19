@@ -20,6 +20,8 @@ import {
   liveHelpMessages,
   liveHelpSendHint,
   liveHelpEnd,
+  liveHelpSendHighlight,
+  liveHelpClearHighlight,
   type LiveHelpSession,
   type LiveHelpHintMessage,
   type LiveHelpOutcome,
@@ -122,22 +124,17 @@ export function TeacherLiveHelpPane({ session, onClose, onEnded }: TeacherLiveHe
     if (!hlSelector.trim() || hlSending) return;
     setHlSending(true);
     try {
-      // Lưu DB qua REST để persist (server sẽ emit highlight:show kèm id)
-      await fetch(`/api/live/help/${session.id}/highlight`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("apex_auth_token") ?? ""}`,
-        },
-        body: JSON.stringify({
-          selector: hlSelector.trim(),
-          note: hlNote.trim() || null,
-        }),
-      });
+      // Persist qua REST (apiClient tự gắn Authorization header từ token hiện tại)
+      await liveHelpSendHighlight(
+        session.id,
+        hlSelector.trim(),
+        hlNote.trim() || null
+      );
       setHlNote("");
       // Không clear selector — GV có thể muốn dùng lại
-    } catch (e) {
+    } catch (e: any) {
       console.error("[TeacherLiveHelpPane] highlight failed:", e);
+      alert(e?.error || "Không gửi được highlight. Thử lại nhé.");
     } finally {
       setHlSending(false);
     }
@@ -145,12 +142,7 @@ export function TeacherLiveHelpPane({ session, onClose, onEnded }: TeacherLiveHe
 
   const handleClearHighlight = async () => {
     try {
-      await fetch(`/api/live/help/${session.id}/highlight/clear`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("apex_auth_token") ?? ""}`,
-        },
-      });
+      await liveHelpClearHighlight(session.id);
     } catch (e) {
       console.error("[TeacherLiveHelpPane] clear highlight failed:", e);
     }
