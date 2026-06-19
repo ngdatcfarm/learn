@@ -1,6 +1,6 @@
 # Roadmap & Tiến độ dự án `thaoenglish/learn`
 
-> Cập nhật lần cuối: 2026-06-19 (Step 10i — lịch sử PH↔HS link)
+> Cập nhật lần cuối: 2026-06-19 (Step 12a — Live Help Cấp 1)
 > Mục đích: Theo dõi các Step đã chốt, đang làm, và sắp tới — để mỗi lần quay lại trao đổi đều biết kế hoạch tới đâu.
 
 ---
@@ -38,6 +38,7 @@
 | **10f** | **Bulk import classes + auto-link HS qua CSV** | ✅ **Done 2026-06-19** | Commit `69a1101` — `POST /api/admin/classes/import` (CSV parse → 2-phase INSERT class + members trong 1 transaction). CSV columns: class_name, teacher_username, student_usernames (semicolon-separated). Class mới = teacher phải tồn tại + role='teacher' + chưa bị soft-delete. Members insert dùng `INSERT IGNORE` (idempotent nếu HS đã ở lớp). |
 | **10g** | **PH multi-class view (Step 10h)** | ✅ **Done 2026-06-19** | Commit `fccb743` — `GET /api/dashboard/parent/classes` (JOIN classes+class_members+parent_links, group by class, aggregate stats: tasks_done/minutes/active_children). Frontend `ClassesSection` mới giữa "Tổng quan" và "Cài đặt", 3 KPI cards + per-class children list với needs_help alert. |
 | **10i** | **Lịch sử PH↔HS link (soft-delete + restore)** | ✅ **Done 2026-06-19** | Commit `1e9a30f` — Migration 008 (`deleted_at` + `deleted_by` FK→users + index). DELETE → UPDATE soft-delete. Mới: `GET /api/admin/parent-links/history` + `POST /api/admin/parent-links/:p/:s/restore`. EditUserModal có tab "📜 Lịch sử" thứ 3, restore 1-click với confirm. |
+| **12a** | **Live Help T3 — Cấp 1 (Text hint) + Foundation** | ✅ **Done 2026-06-19** | Commit `6e1e796` — 3-commit plan (Text → Highlight → Voice). Migration 009 tạo 3 table (sessions/hints/highlights; highlights anticipate Slice B). 7 endpoint REST (request/teacher-proactive/hint/end/queue/mine/messages) + auto-assign teacher (lớp HS cũ nhất) + Inbox fallback. FE: floating "🆘" cho HS + HelpRequestModal + LiveHelpModal (HS chat) + TeacherLiveHelpPane (slide-in right) + useLiveHelp hook với 3s polling. Slice B (Socket.io + Highlight) + Slice C (WebRTC Voice) sẽ dùng lại schema + hooks. PH không có role. |
 
 ---
 
@@ -113,6 +114,8 @@ fd56b29 feat: admin can manage parent-student links via EditUserModal
 
 ### Ưu tiên thấp
 - **Step 7+**: MySQL `GET_LOCK()` cho cron multi-instance (khi scale PM2 cluster)
+- **Step 12b**: Live Help Cấp 3 (Highlight) + Socket.io — dùng lại schema từ 12a
+- **Step 12c**: Live Help Cấp 2 (Voice) + WebRTC (simple-peer + Google STUN)
 
 > Đã drop: **Off-site backup** — server thuê dịch vụ đã cam kết backup sẵn, không cần tự lo.
 
