@@ -110,7 +110,6 @@ fd56b29 feat: admin can manage parent-student links via EditUserModal
 
 ### Ưu tiên thấp
 - **Step 7+**: MySQL `GET_LOCK()` cho cron multi-instance (khi scale PM2 cluster)
-- **PH multi-class view** (hiện PH chỉ thấy từng con, không tổng hợp theo lớp)
 - **Lịch sử liên kết PH ↔ HS** (soft-delete + restore UI)
 
 > Đã drop: **Off-site backup** — server thuê dịch vụ đã cam kết backup sẵn, không cần tự lo.
