@@ -201,7 +201,7 @@ liveHelpRouter.post("/request", async (req: Request, res: Response) => {
 
   await query<ResultSetHeader>(
     `INSERT INTO live_help_sessions
-       (id, student_id, teacher_id, assignment_id, trigger, level, status, created_at)
+       (id, student_id, teacher_id, assignment_id, \`trigger\`, \`level\`, status, created_at)
      VALUES (?, ?, ?, ?, 'student_request', 'text', 'pending', ?)`,
     [sessionId, student.id, teacherId, assignment_id ?? null, now]
   );
@@ -309,7 +309,7 @@ liveHelpRouter.post("/teacher-proactive", async (req: Request, res: Response) =>
 
   await query<ResultSetHeader>(
     `INSERT INTO live_help_sessions
-       (id, class_id, student_id, teacher_id, trigger, level, status, started_at, created_at)
+       (id, class_id, student_id, teacher_id, \`trigger\`, \`level\`, status, started_at, created_at)
      VALUES (?, ?, ?, ?, 'teacher_proactive', 'text', 'active', ?, ?)`,
     [sessionId, classRow?.class_id ?? null, student_id, teacher.id, now, now]
   );
