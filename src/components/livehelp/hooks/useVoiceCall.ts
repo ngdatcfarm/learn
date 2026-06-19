@@ -182,7 +182,20 @@ export function useVoiceCall({
         initiator,
         trickle: true,
         stream,
-        config: { iceServers },
+        // iceTransportPolicy:
+        //   - "relay" (mặc định): CHỈ dùng TURN server. Work với 4G/symmetric NAT
+        //     (HS dùng 4G carrier-grade NAT thì host/srflx không bao giờ reach).
+        //     Tradeoff: latency +30-50ms (qua server), chấp nhận được cho voice HS.
+        //   - "all" (opt-out qua VITE_TURN_RELAY_ONLY=false): browser thử host/srflx trước.
+        //     Chrome có thể "kết luận fail" nhanh trước khi gather relay candidates.
+        //     Chỉ dùng khi test LAN-only hoặc cùng subnet.
+        config: {
+          iceServers,
+          iceTransportPolicy:
+            (import.meta as any).env?.VITE_TURN_RELAY_ONLY === "false"
+              ? "all"
+              : "relay",
+        },
       });
 
       // Debug: log ICE candidates + state changes để diagnose NAT/TURN issue.

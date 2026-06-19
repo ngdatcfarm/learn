@@ -135,7 +135,14 @@ export function useScreenShare({
         initiator,
         trickle: true,
         stream,
-        config: { iceServers },
+        // iceTransportPolicy: "relay" (mặc định) — xem useVoiceCall.ts comment.
+        config: {
+          iceServers,
+          iceTransportPolicy:
+            (import.meta as any).env?.VITE_TURN_RELAY_ONLY === "false"
+              ? "all"
+              : "relay",
+        },
       });
 
       peer.on("signal", (data) => {
