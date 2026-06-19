@@ -1128,3 +1128,95 @@ export async function reviewFlashcard(
 ): Promise<FlashcardReviewResult> {
   return request("POST", "/api/flashcards/review", { vocabId, quality });
 }
+
+// ============================================================
+// Live Help T3 — Cấp 1 (Text hint) (Step 12a)
+// ============================================================
+
+export type LiveHelpLevel = "text" | "voice" | "highlight" | "mixed";
+export type LiveHelpStatus = "pending" | "active" | "ended";
+export type LiveHelpTrigger = "student_request" | "teacher_proactive";
+export type LiveHelpOutcome =
+  | "understood"
+  | "gave_up"
+  | "timeout"
+  | "teacher_left";
+
+export interface LiveHelpSession {
+  id: string;
+  class_id: string | null;
+  student_id: string;
+  teacher_id: string;
+  assignment_id: string | null;
+  trigger: LiveHelpTrigger;
+  level: LiveHelpLevel;
+  status: LiveHelpStatus;
+  started_at: string | null;
+  ended_at: string | null;
+  outcome: LiveHelpOutcome | null;
+  created_at: string;
+  student_name: string;
+  student_username: string;
+  teacher_name: string;
+  teacher_username: string;
+  class_name: string | null;
+}
+
+export interface LiveHelpHintMessage {
+  id: string;
+  session_id: string;
+  sender_id: string;
+  message: string;
+  created_at: string;
+  sender_name: string;
+  sender_role: "student" | "parent" | "teacher" | "admin";
+}
+
+export async function liveHelpRequest(input: {
+  assignment_id?: string;
+  message?: string;
+}): Promise<{ ok: true; session_id: string }> {
+  return request("POST", "/api/live/help/request", input);
+}
+
+export async function liveHelpTeacherProactive(input: {
+  student_id: string;
+  message?: string;
+}): Promise<{ ok: true; session_id: string }> {
+  return request("POST", "/api/live/help/teacher-proactive", input);
+}
+
+export async function liveHelpSendHint(
+  sessionId: string,
+  message: string
+): Promise<{ ok: true; hint_id: string }> {
+  return request("POST", `/api/live/help/${sessionId}/hint`, { message });
+}
+
+export async function liveHelpEnd(
+  sessionId: string,
+  outcome?: LiveHelpOutcome
+): Promise<{ ok: true; already_ended?: boolean }> {
+  return request("POST", `/api/live/help/${sessionId}/end`, outcome ? { outcome } : {});
+}
+
+export async function liveHelpTeacherQueue(): Promise<{
+  sessions: LiveHelpSession[];
+  count: number;
+}> {
+  return request("GET", "/api/live/help/queue");
+}
+
+export async function liveHelpStudentMine(): Promise<{
+  sessions: LiveHelpSession[];
+  count: number;
+}> {
+  return request("GET", "/api/live/help/mine");
+}
+
+export async function liveHelpMessages(sessionId: string): Promise<{
+  messages: LiveHelpHintMessage[];
+  count: number;
+}> {
+  return request("GET", `/api/live/help/${sessionId}/messages`);
+}

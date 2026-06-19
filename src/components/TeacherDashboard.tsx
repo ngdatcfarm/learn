@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { motion } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
 import {
   RefreshCw,
   Users,
@@ -13,18 +13,25 @@ import {
   BarChart3,
   Sparkles,
   GraduationCap,
+  LifeBuoy,
+  MessageCircle,
+  Hand,
 } from "lucide-react";
 import { SKILL_META, SkillId } from "../types";
 import {
   getTeacherDashboard,
   listMyClasses,
+  liveHelpTeacherQueue,
+  liveHelpTeacherProactive,
   TeacherClassItem,
   TeacherDashboardResponse,
   StudentWithStats,
+  LiveHelpSession,
 } from "../api/client";
 import sound from "../utils/sound";
 import { formatSkillValue } from "../utils/format";
 import KpiCard from "./ui/KpiCard";
+import { TeacherLiveHelpPane } from "./livehelp";
 
 const SAVED_CLASS_KEY = "apex_teacher_class";
 
@@ -84,6 +91,26 @@ export default function TeacherDashboard() {
   const [myClasses, setMyClasses] = useState<TeacherClassItem[]>([]);
   const [selectedClassId, setSelectedClassId] = useState<string | null>(null);
   const [classListLoading, setClassListLoading] = useState(true);
+
+  // Live Help (Step 12a): teacher queue + active session pane
+  const [liveHelpQueue, setLiveHelpQueue] = useState<LiveHelpSession[]>([]);
+  const [activeHelpSession, setActiveHelpSession] = useState<LiveHelpSession | null>(null);
+
+  const loadLiveHelpQueue = useCallback(async () => {
+    try {
+      const { sessions } = await liveHelpTeacherQueue();
+      setLiveHelpQueue(sessions);
+    } catch (e) {
+      console.warn("liveHelp queue load failed:", e);
+    }
+  }, []);
+
+  // Initial load + 10s polling cho queue
+  useEffect(() => {
+    loadLiveHelpQueue();
+    const tick = setInterval(loadLiveHelpQueue, 10_000);
+    return () => clearInterval(tick);
+  }, [loadLiveHelpQueue]);
 
   // Load class list + hydrate saved selection from localStorage
   useEffect(() => {
@@ -258,7 +285,28 @@ export default function TeacherDashboard() {
         helpStudents={helpStudents}
         refreshing={refreshing}
         onRefresh={handleRefresh}
+        liveHelpQueue={liveHelpQueue}
+        onOpenHelpSession={setActiveHelpSession}
+        onProactiveHelp={async (sid) => {
+          try {
+            await liveHelpTeacherProactive({ student_id: sid });
+            await loadLiveHelpQueue();
+          } catch (e: any) {
+            alert(e?.error || "Không thể tạo phiên hỗ trợ.");
+          }
+        }}
       />
+
+      {/* Live Help slide-out pane (Step 12a) */}
+      <AnimatePresence>
+        {activeHelpSession && (
+          <TeacherLiveHelpPane
+            session={activeHelpSession}
+            onClose={() => setActiveHelpSession(null)}
+            onEnded={loadLiveHelpQueue}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -325,6 +373,9 @@ function ClassSection({
   helpStudents,
   refreshing,
   onRefresh,
+  liveHelpQueue,
+  onOpenHelpSession,
+  onProactiveHelp,
 }: {
   cls: TeacherDashboardResponse["class"];
   students: StudentWithStats[];
@@ -332,6 +383,9 @@ function ClassSection({
   helpStudents: StudentWithStats[];
   refreshing: boolean;
   onRefresh: () => void;
+  liveHelpQueue: LiveHelpSession[];
+  onOpenHelpSession: (s: LiveHelpSession) => void;
+  onProactiveHelp: (studentId: string) => Promise<void>;
 }) {
   return (
     <div className="space-y-5">
@@ -577,6 +631,93 @@ function ClassSection({
         </motion.div>
       </div>
 
+      {/* LIVE HELP QUEUE — Step 12a Cấp 1 (text hint) */}
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.12 }}
+        className="p-5 rounded-3xl border space-y-3 shadow-sm"
+        style={{
+          backgroundColor: liveHelpQueue.length > 0 ? "var(--primary-soft)" : "var(--bg-card)",
+          borderColor: liveHelpQueue.length > 0 ? "var(--primary)" : "var(--border)",
+        }}
+      >
+        <div className="flex items-center justify-between pb-2 border-b" style={{ borderColor: "var(--border-soft)" }}>
+          <div className="flex items-center gap-2">
+            <LifeBuoy className="w-4 h-4" style={{ color: "var(--primary)" }} />
+            <h3 className="text-sm font-extrabold uppercase tracking-wider">
+              🆘 Hỗ trợ trực tiếp
+            </h3>
+            {liveHelpQueue.length > 0 && (
+              <span
+                className="px-1.5 py-0.5 rounded-full text-[10px] font-extrabold"
+                style={{ backgroundColor: "var(--primary)", color: "#fff" }}
+              >
+                {liveHelpQueue.length}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {liveHelpQueue.length === 0 ? (
+          <div className="text-center py-6 space-y-2">
+            <div className="text-3xl">📭</div>
+            <p className="text-sm font-extrabold">Chưa có HS nào đang chờ hỗ trợ.</p>
+            <p className="text-xs" style={{ color: "var(--muted)" }}>
+              Khi HS bấm "Cần hỗ trợ", danh sách sẽ xuất hiện ở đây.
+            </p>
+            {students.length > 0 && (
+              <ProactiveHelpSection students={students} onProactive={onProactiveHelp} />
+            )}
+          </div>
+        ) : (
+          <ul className="space-y-2">
+            {liveHelpQueue.map((s) => (
+              <li
+                key={s.id}
+                className="p-3 rounded-2xl border flex items-center gap-3 cursor-pointer hover:scale-[1.01] transition-transform"
+                style={{
+                  backgroundColor: "var(--bg-elevated)",
+                  borderColor: s.status === "pending" ? "var(--warning)" : "var(--success)",
+                }}
+                onClick={() => onOpenHelpSession(s)}
+              >
+                <div
+                  className="w-9 h-9 rounded-xl flex items-center justify-center text-sm font-extrabold shrink-0"
+                  style={{
+                    background: "linear-gradient(135deg, var(--primary), var(--accent))",
+                    color: "white",
+                  }}
+                >
+                  {s.student_name.charAt(0).toUpperCase()}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="font-extrabold text-sm truncate">{s.student_name}</div>
+                  <div className="flex items-center gap-1.5 mt-0.5 text-[10px]" style={{ color: "var(--muted)" }}>
+                    {s.trigger === "teacher_proactive" ? (
+                      <><Hand className="w-3 h-3" /> GV đã vào</>
+                    ) : (
+                      <><MessageCircle className="w-3 h-3" /> HS yêu cầu</>
+                    )}
+                    <span>·</span>
+                    <span>{new Date(s.created_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</span>
+                  </div>
+                </div>
+                <span
+                  className="px-2 py-1 rounded-lg text-[10px] font-extrabold"
+                  style={{
+                    backgroundColor: s.status === "pending" ? "var(--warning)" : "var(--success)",
+                    color: "#fff",
+                  }}
+                >
+                  {s.status === "pending" ? "⏳ Chờ" : "● Đang chat"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </motion.div>
+
       {/* MA TRẬN LỚP — students × 5 skills */}
       <motion.div
         initial={{ opacity: 0, y: 8 }}
@@ -757,6 +898,59 @@ function ClassSection({
       >
         🦉 Dữ liệu tự động cập nhật khi HS đo kỹ năng. Nhấn "Làm mới" để reload thủ công.
       </p>
+    </div>
+  );
+}
+
+// ============================================================
+// ProactiveHelpSection — dropdown cho GV chủ động hỏi HS
+// Step 12a: dùng khi queue trống nhưng GV muốn "pop in" 1-1 với HS bất kỳ
+// ============================================================
+
+function ProactiveHelpSection({
+  students,
+  onProactive,
+}: {
+  students: StudentWithStats[];
+  onProactive: (studentId: string) => Promise<void> | void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  return (
+    <div className="pt-2">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="text-[11px] font-extrabold underline"
+        style={{ color: "var(--primary)" }}
+      >
+        {open ? "✕ Đóng" : "+ Chủ động hỏi HS"}
+      </button>
+      {open && (
+        <div className="mt-2 max-h-[200px] overflow-y-auto rounded-xl border" style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border)" }}>
+          {students.map((s) => (
+            <button
+              key={s.id}
+              disabled={busy === s.id}
+              onClick={async () => {
+                if (!confirm(`Vào hỏi thăm HS ${s.name}?`)) return;
+                setBusy(s.id);
+                await onProactive(s.id);
+                setBusy(null);
+                setOpen(false);
+              }}
+              className="w-full px-3 py-2 text-left text-xs font-bold flex items-center gap-2 border-b last:border-b-0 disabled:opacity-50"
+              style={{ borderColor: "var(--border-soft)", color: "var(--foreground)" }}
+            >
+              <span className="font-extrabold">{s.name}</span>
+              <span className="text-[10px]" style={{ color: "var(--muted)" }}>
+                @{s.username}
+              </span>
+              {busy === s.id && <span style={{ color: "var(--primary)" }}>Đang vào...</span>}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

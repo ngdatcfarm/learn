@@ -45,6 +45,7 @@ import AdminDashboard from "./components/AdminDashboard";
 import ParentDashboard from "./components/ParentDashboard";
 import { InboxBell } from "./components/InboxBell";
 import InboxPopup from "./components/InboxPopup";
+import { LiveHelpIndicator } from "./components/livehelp";
 
 type Theme = "light" | "dark";
 
@@ -669,6 +670,9 @@ export default function App() {
           user={user}
           onUnreadChange={setInboxUnreadCount}
         />
+
+        {/* LIVE HELP INDICATOR — floating widget cho HS (Step 12a: Cấp 1 text hint) */}
+        {!isStaff && <LiveHelpIndicator />}
       </div>
     </ThemeContext.Provider>
   );
