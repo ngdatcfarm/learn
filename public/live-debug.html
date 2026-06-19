@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Live Debug — english.cfarm.vn</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0; padding: 12px;
+      background: #0f172a; color: #e2e8f0;
+      min-height: 100vh;
+    }
+    h1 { font-size: 16px; margin: 0 0 12px; color: #f1f5f9; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .panel {
+      background: #1e293b; border-radius: 8px;
+      padding: 12px; display: flex; flex-direction: column;
+      min-height: 80vh;
+    }
+    .panel h2 { font-size: 13px; margin: 0 0 8px; color: #fbbf24; }
+    .panel.callee h2 { color: #60a5fa; }
+    .row { display: flex; gap: 6px; margin-bottom: 6px; align-items: center; }
+    label { font-size: 11px; color: #94a3b8; min-width: 50px; }
+    input, select {
+      flex: 1; background: #0f172a; color: #e2e8f0;
+      border: 1px solid #334155; border-radius: 4px;
+      padding: 4px 8px; font-size: 12px; font-family: inherit;
+    }
+    input:focus, select:focus { outline: 1px solid #3b82f6; border-color: #3b82f6; }
+    button {
+      background: #2563eb; color: white; border: 0;
+      padding: 5px 12px; border-radius: 4px; font-size: 12px;
+      cursor: pointer; font-weight: 500;
+    }
+    button:disabled { background: #475569; cursor: not-allowed; }
+    button.danger { background: #dc2626; }
+    button.success { background: #16a34a; }
+    .status {
+      font-size: 11px; padding: 2px 8px; border-radius: 4px;
+      background: #334155; color: #cbd5e1; display: inline-block;
+    }
+    .status.ok { background: #16a34a; color: white; }
+    .status.bad { background: #dc2626; color: white; }
+    .status.warn { background: #f59e0b; color: white; }
+    .log {
+      flex: 1; overflow: auto;
+      background: #020617; border-radius: 4px;
+      padding: 8px; font-family: "SF Mono", Consolas, monospace;
+      font-size: 11px; line-height: 1.4; min-height: 200px;
+    }
+    .log-line { white-space: pre-wrap; word-break: break-all; margin-bottom: 2px; }
+    .log-line .ts { color: #64748b; }
+    .log-line .role { color: #fbbf24; font-weight: bold; }
+    .log-line.callee .role { color: #60a5fa; }
+    .log-line.in { color: #4ade80; }
+    .log-line.out { color: #f472b6; }
+    .log-line.err { color: #f87171; background: #450a0a; padding: 2px 4px; border-radius: 2px; }
+    .log-line.ice { color: #a78bfa; }
+    .clear-btn { float: right; }
+    .controls { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <h1>🔍 Live Debug — WebRTC signaling monitor</h1>
+  <p style="font-size:12px; color:#94a3b8; margin:0 0 12px">
+    Mở 2 tab cùng page này. Tab 1 = Caller (HS), Tab 2 = Callee (GV). Mỗi tab paste token + sessionId, bấm Connect.
+    Log sẽ hiện realtime cả 2 phía để so sánh signaling flow.
+  </p>
+  <div class="grid">
+    <!-- Caller panel -->
+    <div class="panel caller">
+      <h2>📞 CALLER (HS — initiator)</h2>
+      <div class="row">
+        <label>Token</label>
+        <input id="caller-token" placeholder="apex_auth_token" />
+        <button onclick="prefillCaller()">📋 lấy từ localStorage</button>
+      </div>
+      <div class="row">
+        <label>Session</label>
+        <input id="caller-session" placeholder="session UUID" />
+      </div>
+      <div class="row">
+        <label>Status</label>
+        <span id="caller-status" class="status">disconnected</span>
+        <button id="caller-connect" class="success" onclick="connectCaller()">Connect</button>
+        <button id="caller-disconnect" class="danger" disabled onclick="disconnectCaller()">Disconnect</button>
+        <button class="clear-btn" onclick="clearLog('caller')">clear log</button>
+      </div>
+      <div class="log" id="caller-log"></div>
+      <div class="controls">
+        <button onclick="emitOffer('caller')">→ emit call:offer (test)</button>
+      </div>
+    </div>
+
+    <!-- Callee panel -->
+    <div class="panel callee">
+      <h2>📞 CALLEE (GV — responder)</h2>
+      <div class="row">
+        <label>Token</label>
+        <input id="callee-token" placeholder="apex_auth_token" />
+        <button onclick="prefillCallee()">📋 lấy từ localStorage</button>
+      </div>
+      <div class="row">
+        <label>Session</label>
+        <input id="callee-session" placeholder="session UUID (same as caller)" />
+      </div>
+      <div class="row">
+        <label>Status</label>
+        <span id="callee-status" class="status">disconnected</span>
+        <button id="callee-connect" class="success" onclick="connectCallee()">Connect</button>
+        <button id="callee-disconnect" class="danger" disabled onclick="disconnectCallee()">Disconnect</button>
+        <button class="clear-btn" onclick="clearLog('callee')">clear log</button>
+      </div>
+      <div class="log" id="callee-log"></div>
+      <div class="controls">
+        <button onclick="emitAnswer('callee')">→ emit call:answer (test)</button>
+      </div>
+    </div>
+  </div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+(function () {
+  const sockets = { caller: null, callee: null };
+
+  function log(side, msg, type = '') {
+    const el = document.getElementById(side + '-log');
+    const line = document.createElement('div');
+    line.className = 'log-line ' + type;
+    const ts = new Date().toISOString().slice(11, 23);
+    const role = side === 'caller' ? 'HS ' : 'GV ';
+    line.innerHTML = `<span class="ts">${ts}</span> <span class="role">${role}</span>${escape(msg)}`;
+    el.appendChild(line);
+    el.scrollTop = el.scrollHeight;
+  }
+
+  function escape(s) {
+    return String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  }
+
+  function setStatus(side, text, cls) {
+    const el = document.getElementById(side + '-status');
+    el.textContent = text;
+    el.className = 'status ' + (cls || '');
+  }
+
+  function clearLog(side) {
+    document.getElementById(side + '-log').textContent = '';
+  }
+
+  function prefillCaller() {
+    const t = localStorage.getItem('apex_auth_token');
+    if (t) document.getElementById('caller-token').value = t;
+  }
+  function prefillCallee() {
+    const t = localStorage.getItem('apex_auth_token');
+    if (t) document.getElementById('callee-token').value = t;
+  }
+
+  function setupSocket(side, token, sessionId) {
+    const socket = io('/live-help', {
+      auth: { token: token },
+      transports: ['websocket', 'polling'],
+      reconnection: false,
+    });
+    sockets[side] = socket;
+
+    socket.on('connect', () => {
+      log(side, '✓ socket connected (id=' + socket.id + ')', 'in');
+      setStatus(side, 'connected', 'ok');
+      socket.emit('room:join', { sessionId });
+      log(side, '→ emit room:join sessionId=' + sessionId, 'out');
+    });
+
+    socket.on('disconnect', (reason) => {
+      log(side, '✗ disconnected: ' + reason, 'err');
+      setStatus(side, 'disconnected', 'bad');
+    });
+
+    socket.on('connect_error', (err) => {
+      log(side, '✗ connect_error: ' + err.message, 'err');
+      setStatus(side, 'connect_error', 'bad');
+    });
+
+    // Signaling events
+    socket.on('call:offer', (payload) => {
+      log(side, '← call:offer from=' + (payload.from_role || '?') + ' sessionId=' + (payload.sessionId === sessionId ? '✓match' : '✗MISMATCH'), 'in');
+    });
+    socket.on('call:answer', (payload) => {
+      log(side, '← call:answer from=' + payload.from, 'in');
+    });
+    socket.on('call:ice', (payload) => {
+      const c = payload.candidate?.candidate || '';
+      // Parse candidate: "candidate:... typ relay/srflx/host ..."
+      const typeMatch = c.match(/typ (\w+)/);
+      const protoMatch = c.match(/\d+ (udp|tcp)/);
+      const addrMatch = c.match(/(\d+\.\d+\.\d+\.\d+|\[[\da-f:]+\])/);
+      const type = typeMatch ? typeMatch[1] : '?';
+      log(side, `← call:ice ${type}/${protoMatch ? protoMatch[1] : '?'} ${addrMatch ? addrMatch[1] : '?'}`, 'ice');
+    });
+    socket.on('call:hangup', (payload) => {
+      log(side, '← call:hangup from=' + payload.from, 'in');
+    });
+    socket.on('call:peer-left', (payload) => {
+      log(side, '← call:peer-left role=' + payload.role, 'in');
+    });
+
+    // Room events (server may emit)
+    socket.on('room:joined', (payload) => {
+      log(side, '✓ room:joined ' + JSON.stringify(payload), 'in');
+    });
+    socket.onAny((event, ...args) => {
+      // Catch-all for unknown events
+      if (!['connect', 'disconnect', 'connect_error',
+            'call:offer', 'call:answer', 'call:ice', 'call:hangup', 'call:peer-left', 'room:joined'
+           ].includes(event)) {
+        log(side, '? ' + event + ' ' + JSON.stringify(args).slice(0, 200), 'err');
+      }
+    });
+  }
+
+  window.connectCaller = function () {
+    const token = document.getElementById('caller-token').value.trim();
+    const sessionId = document.getElementById('caller-session').value.trim();
+    if (!token || !sessionId) { alert('cần token + sessionId'); return; }
+    if (sockets.caller) sockets.caller.disconnect();
+    setupSocket('caller', token, sessionId);
+    document.getElementById('caller-connect').disabled = true;
+    document.getElementById('caller-disconnect').disabled = false;
+  };
+  window.disconnectCaller = function () {
+    if (sockets.caller) sockets.caller.disconnect();
+    sockets.caller = null;
+    document.getElementById('caller-connect').disabled = false;
+    document.getElementById('caller-disconnect').disabled = true;
+  };
+  window.connectCallee = function () {
+    const token = document.getElementById('callee-token').value.trim();
+    const sessionId = document.getElementById('callee-session').value.trim();
+    if (!token || !sessionId) { alert('cần token + sessionId'); return; }
+    if (sockets.callee) sockets.callee.disconnect();
+    setupSocket('callee', token, sessionId);
+    document.getElementById('callee-connect').disabled = true;
+    document.getElementById('callee-disconnect').disabled = false;
+  };
+  window.disconnectCallee = function () {
+    if (sockets.callee) sockets.callee.disconnect();
+    sockets.callee = null;
+    document.getElementById('callee-connect').disabled = false;
+    document.getElementById('callee-disconnect').disabled = true;
+  };
+  window.clearLog = clearLog;
+
+  // Test buttons — emit fake signaling for protocol verification
+  window.emitOffer = function (side) {
+    const socket = sockets[side];
+    const sessionId = document.getElementById(side + '-session').value.trim();
+    if (!socket) { alert('chưa connect'); return; }
+    socket.emit('call:offer', { sessionId, sdp: { type: 'offer', sdp: '(test)' } });
+    log(side, '→ emit call:offer (TEST)', 'out');
+  };
+  window.emitAnswer = function (side) {
+    const socket = sockets[side];
+    const sessionId = document.getElementById(side + '-session').value.trim();
+    if (!socket) { alert('chưa connect'); return; }
+    socket.emit('call:answer', { sessionId, sdp: { type: 'answer', sdp: '(test)' } });
+    log(side, '→ emit call:answer (TEST)', 'out');
+  };
+})();
+</script>
+</body>
+</html>
