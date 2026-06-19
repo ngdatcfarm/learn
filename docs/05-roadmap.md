@@ -1,6 +1,6 @@
 # Roadmap & Tiến độ dự án `thaoenglish/learn`
 
-> Cập nhật lần cuối: 2026-06-19 (5 polish commits sau Step 10e)
+> Cập nhật lần cuối: 2026-06-19 (Step 10i — lịch sử PH↔HS link)
 > Mục đích: Theo dõi các Step đã chốt, đang làm, và sắp tới — để mỗi lần quay lại trao đổi đều biết kế hoạch tới đâu.
 
 ---
@@ -35,6 +35,9 @@
 | **10e** | **Bulk import users via CSV** | ✅ **Done 2026-06-19** | Commit `b0cfdfe` — `POST /api/admin/users/import` (CSV parse → validate → multi-row INSERT chunked 500 rows). Atomic: any row error → 400 với errors[], nothing inserted. CSV columns: username, name, role (required) + password, level, cefr_level, goal, daily_goal_minutes, phone (optional). Password optional → auto-gen temp + `must_change_password=1`. 5MB cap. UI: AdminDashboard "Import CSV" button → ImportUsersModal (file upload OR paste + template + copyable temp password table). Refactor: extract `parseAndValidateImport()` helper + `VALID_DAILY_GOALS` constant. |
 | **11** | **Streak protection + daily nudge (v7 migration)** | ✅ **Done 2026-06-18** | Commit `b16cc7b` — 2 cron jobs: `streak_freeze` (00:05 auto-apply) + `streakNudge` (19:00 gửi inbox cho PH+GV). `computeEngagement` consult `streak_freezes` để streak không gap khi auto-freeze. Bug fixes: drop `subject` field trên direct-thread INSERT + fix timezone mismatch UTC↔local. Refactor: extract `sendDirectMessage` (messaging.ts) + `isInTimeWindow/formatDateLocal` (`server/utils/time.ts`). Xem `step11-streak-protection.md`. |
 | **Polish** | **5 commits ship được ngay (sau Step 10e)** | ✅ **Done 2026-06-19** | Commits `524a1f0` → `0c1d8a4`. Refactor: extract `server/constants.ts` (single source of truth validation) + share `validateUserFields` (errors[] thay throw). Feature: relationship dropdown cố định (mother/father/guardian/other), auto-suggest PH/HS theo họ trong picker, bulk add HS vào lớp qua CSV, parent_username column trong CSV import (auto-link PH ↔ HS). |
+| **10f** | **Bulk import classes + auto-link HS qua CSV** | ✅ **Done 2026-06-19** | Commit `69a1101` — `POST /api/admin/classes/import` (CSV parse → 2-phase INSERT class + members trong 1 transaction). CSV columns: class_name, teacher_username, student_usernames (semicolon-separated). Class mới = teacher phải tồn tại + role='teacher' + chưa bị soft-delete. Members insert dùng `INSERT IGNORE` (idempotent nếu HS đã ở lớp). |
+| **10g** | **PH multi-class view (Step 10h)** | ✅ **Done 2026-06-19** | Commit `fccb743` — `GET /api/dashboard/parent/classes` (JOIN classes+class_members+parent_links, group by class, aggregate stats: tasks_done/minutes/active_children). Frontend `ClassesSection` mới giữa "Tổng quan" và "Cài đặt", 3 KPI cards + per-class children list với needs_help alert. |
+| **10i** | **Lịch sử PH↔HS link (soft-delete + restore)** | ✅ **Done 2026-06-19** | Commit `1e9a30f` — Migration 008 (`deleted_at` + `deleted_by` FK→users + index). DELETE → UPDATE soft-delete. Mới: `GET /api/admin/parent-links/history` + `POST /api/admin/parent-links/:p/:s/restore`. EditUserModal có tab "📜 Lịch sử" thứ 3, restore 1-click với confirm. |
 
 ---
 
@@ -90,8 +93,8 @@ fd56b29 feat: admin can manage parent-student links via EditUserModal
 
 ### Out of scope (deferred)
 - Bulk add nhiều PH ↔ HS cùng lúc
-- Lịch sử liên kết (chỉ xóa mềm rồi restore)
-- Multi-class cho PH
+- ~~Lịch sử liên kết (chỉ xóa mềm rồi restore)~~ → done 2026-06-19 (commit `1e9a30f` — Step 10i)
+- ~~Multi-class cho PH~~ → done 2026-06-19 (commit `fccb743` — Step 10h)
 - ~~Auto-suggest PH/HS theo tên con~~ → done 2026-06-19 (commit `d1c3e6a`)
 - ~~Relationship options dropdown cố định (mother/father/...) — giữ free-text~~ → done 2026-06-19 (commit `60067d6`, giờ dùng fixed vocab)
 
@@ -110,7 +113,6 @@ fd56b29 feat: admin can manage parent-student links via EditUserModal
 
 ### Ưu tiên thấp
 - **Step 7+**: MySQL `GET_LOCK()` cho cron multi-instance (khi scale PM2 cluster)
-- **Lịch sử liên kết PH ↔ HS** (soft-delete + restore UI)
 
 > Đã drop: **Off-site backup** — server thuê dịch vụ đã cam kết backup sẵn, không cần tự lo.
 
