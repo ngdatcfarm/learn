@@ -11,6 +11,8 @@ import {
   LinkedUser,
   ImportUserResult,
   ImportUsersError,
+  ImportClassResult,
+  ImportClassesError,
   adminListUsers,
   adminGetClassMembers,
   adminAddClassMember,
@@ -21,6 +23,7 @@ import {
   adminRemoveParentLink,
   adminTestZalo,
   adminImportUsers,
+  adminImportClasses,
 } from "../api/client";
 import { Field, inputStyle, inputClass } from "./ui/Field";
 import { ModalShell } from "./ui/ModalShell";
@@ -1761,6 +1764,245 @@ export function ImportUsersModal({
             ⚠️ Copy password ngay — chỉ hiển thị 1 lần. User tự đổi pass khi đăng nhập
             lần đầu.
           </p>
+        </div>
+      )}
+
+      {/* Footer */}
+      {created ? (
+        <button
+          type="button"
+          onClick={handleDone}
+          className="w-full py-2.5 rounded-xl text-sm font-extrabold"
+          style={{ backgroundColor: "var(--primary)", color: "var(--on-primary)" }}
+        >
+          Xong
+        </button>
+      ) : (
+        <div className="flex gap-2.5">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            className="flex-1 py-2.5 rounded-xl text-sm font-extrabold disabled:opacity-50"
+            style={{ backgroundColor: "var(--bg-soft)", color: "var(--muted)" }}
+          >
+            Hủy
+          </button>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={submitting || !csv.trim()}
+            className="flex-1 py-2.5 rounded-xl text-sm font-extrabold disabled:opacity-60"
+            style={{ backgroundColor: "var(--primary)", color: "var(--on-primary)" }}
+          >
+            {submitting ? "Đang xử lý..." : "Import"}
+          </button>
+        </div>
+      )}
+    </ModalShell>
+  );
+}
+
+// ============================================================
+// ImportClassesModal — bulk tạo lớp + auto-link HS qua CSV
+//
+// CSV header (required): class_name, teacher_username
+// CSV header (optional): schedule, description, student_usernames
+//
+// student_usernames dùng `;` làm separator (vd: "nguyen;an;binh") để tránh
+// conflict với CSV comma trong description/schedule fields.
+//
+// Partial success: teacher_username không tồn tại → row bị skip.
+// student_username không tồn tại → class vẫn tạo, chỉ member link fail.
+// ============================================================
+
+const CLASS_CSV_TEMPLATE = `class_name,teacher_username,schedule,description,student_usernames
+Lớp 7A - T3/T6,teacher1,"T3,T6",Lớp giao tiếp,"nguyen;an;binh"
+Lớp 7B - CN,teacher1,CN,Lớp tổng quát,"an;binh"
+Lớp IELTS 8,teacher2,"T3,T6",Luyện IELTS,"nguyen"`;
+
+export function ImportClassesModal({
+  onClose,
+  onSuccess,
+}: {
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [csv, setCsv] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [errors, setErrors] = useState<ImportClassesError[] | null>(null);
+  const [created, setCreated] = useState<ImportClassResult[] | null>(null);
+  const [summary, setSummary] = useState<{
+    total: number;
+    classes_created: number;
+    members_added: number;
+  } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    setCsv(text);
+    setErrors(null);
+    setCreated(null);
+    setSummary(null);
+  };
+
+  const handleUseTemplate = () => {
+    setCsv(CLASS_CSV_TEMPLATE);
+    setErrors(null);
+    setCreated(null);
+    setSummary(null);
+  };
+
+  const handleSubmit = async () => {
+    if (!csv.trim()) {
+      setErrors([{ row: 0, class_name: "", error: "Chưa có nội dung CSV." }]);
+      return;
+    }
+    setSubmitting(true);
+    setErrors(null);
+    setCreated(null);
+    setSummary(null);
+    sound.playClick();
+    try {
+      const res = await adminImportClasses(csv);
+      setCreated(res.created);
+      setSummary(res.summary);
+      sound.playSuccess();
+    } catch (e: any) {
+      sound.playIncorrect();
+      if (e?.errors && Array.isArray(e.errors)) {
+        setErrors(e.errors);
+      } else {
+        setErrors([{ row: 0, class_name: "", error: e?.error || "Import thất bại." }]);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDone = () => {
+    if (created && created.length > 0) onSuccess();
+    onClose();
+  };
+
+  return (
+    <ModalShell title="📥 Import lớp từ CSV" onClose={handleDone} maxWidth="max-w-2xl">
+      <Field
+        label="Nội dung CSV"
+        hint={
+          <span>
+            Header bắt buộc: <code>class_name</code>, <code>teacher_username</code>.
+            Tùy chọn: <code>schedule</code>, <code>description</code>,
+            <code>student_usernames</code> (cách nhau bằng <code>;</code>).
+          </span>
+        }
+      >
+        <textarea
+          value={csv}
+          onChange={(e) => {
+            setCsv(e.target.value);
+            setErrors(null);
+            setCreated(null);
+            setSummary(null);
+          }}
+          placeholder={"class_name,teacher_username,schedule,description,student_usernames\n..."}
+          rows={8}
+          className={`${inputClass()} font-mono text-[11px]`}
+          style={{ ...inputStyle, resize: "vertical" }}
+          disabled={submitting || created !== null}
+        />
+      </Field>
+
+      <div className="flex gap-2 -mt-1">
+        <button
+          type="button"
+          onClick={handleUseTemplate}
+          disabled={submitting || created !== null}
+          className="flex items-center gap-1.5 text-[11px] font-extrabold px-2.5 py-1.5 rounded-lg disabled:opacity-50"
+          style={{ backgroundColor: "var(--bg-soft)", color: "var(--muted-strong)" }}
+        >
+          <FileText className="w-3.5 h-3.5" />
+          Dùng template
+        </button>
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={submitting || created !== null}
+          className="flex items-center gap-1.5 text-[11px] font-extrabold px-2.5 py-1.5 rounded-lg disabled:opacity-50"
+          style={{ backgroundColor: "var(--bg-soft)", color: "var(--muted-strong)" }}
+        >
+          <Upload className="w-3.5 h-3.5" />
+          Upload file
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".csv,text/csv"
+          onChange={handleFile}
+          className="hidden"
+        />
+      </div>
+
+      {/* Summary success */}
+      {summary && created && (
+        <div
+          className="p-3 rounded-xl border space-y-2"
+          style={{
+            backgroundColor: "var(--success-soft)",
+            borderColor: "var(--success)",
+          }}
+        >
+          <div
+            className="text-xs font-extrabold"
+            style={{ color: "var(--success)" }}
+          >
+            ✓ Tạo {summary.classes_created}/{summary.total} lớp
+            {summary.members_added > 0 && `, ${summary.members_added} liên kết HS↔lớp`}
+          </div>
+          <div className="space-y-1 max-h-32 overflow-y-auto">
+            {created.map((c) => (
+              <div key={c.id} className="text-[11px]" style={{ color: "var(--muted-strong)" }}>
+                <span className="font-extrabold">{c.class_name}</span>
+                <span style={{ color: "var(--muted)" }}>
+                  {" "}
+                  (GV: @{c.teacher_username})
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Errors */}
+      {errors && errors.length > 0 && (
+        <div
+          className="p-3 rounded-xl border space-y-1.5 max-h-48 overflow-y-auto"
+          style={{
+            backgroundColor: "var(--danger-soft)",
+            borderColor: "var(--danger)",
+          }}
+        >
+          <div
+            className="text-xs font-extrabold flex items-center gap-1.5"
+            style={{ color: "var(--danger)" }}
+          >
+            <X className="w-3.5 h-3.5" />
+            {errors.length} lỗi:
+          </div>
+          {errors.slice(0, 20).map((e, i) => (
+            <div key={i} className="text-[11px]" style={{ color: "var(--muted-strong)" }}>
+              {e.row > 0 ? `Dòng ${e.row}` : "CSV"}
+              {e.class_name ? ` (${e.class_name})` : ""} — {e.error}
+            </div>
+          ))}
+          {errors.length > 20 && (
+            <div className="text-[10px]" style={{ color: "var(--muted)" }}>
+              … và {errors.length - 20} lỗi khác
+            </div>
+          )}
         </div>
       )}
 

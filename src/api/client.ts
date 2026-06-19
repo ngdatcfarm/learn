@@ -688,6 +688,49 @@ export async function adminBulkAddClassMembers(
   return request("POST", `/api/admin/classes/${classId}/members/bulk`, { csv });
 }
 
+/**
+ * POST /api/admin/classes/import — Bulk import classes + auto-link HS qua CSV.
+ *
+ * CSV header: class_name, teacher_username (required) + schedule, description, student_usernames (optional)
+ * student_usernames dùng `;` làm separator để tránh conflict với CSV comma.
+ *
+ * Partial success: teacher_username không tồn tại / sai role → row bị skip.
+ * student_username không tồn tại → member error, class vẫn tạo.
+ *
+ * Response success:
+ *   {
+ *     ok: true,
+ *     summary: { total, classes_created, members_added },
+ *     created: [{ row, id, class_name, teacher_username }],
+ *     errors: [{ row, class_name, error }]
+ *   }
+ */
+export interface ImportClassResult {
+  row: number;
+  id: string;
+  class_name: string;
+  teacher_username: string;
+}
+
+export interface ImportClassesResponse {
+  ok: true;
+  summary: { total: number; classes_created: number; members_added: number };
+  created: ImportClassResult[];
+  errors: { row: number; class_name: string; error: string }[];
+}
+
+export interface ImportClassesError {
+  row: number;
+  class_name: string;
+  error: string;
+}
+
+export async function adminImportClasses(
+  csv: string
+): Promise<ImportClassesResponse> {
+  return request<ImportClassesResponse>("POST", "/api/admin/classes/import", { csv });
+}
+
 export async function adminRemoveClassMember(
   classId: string,
   studentId: string

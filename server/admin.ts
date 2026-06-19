@@ -1127,6 +1127,324 @@ adminRouter.post("/classes", async (req: Request, res: Response) => {
   res.json({ class: cls });
 });
 
+/**
+ * Bulk import classes qua CSV — tạo lớp + auto-link HS trong cùng 1 file.
+ * 2-phase INSERT trong transaction:
+ *   1. Lookup teacher IDs theo username → INSERT classes (UUID tự sinh)
+ *   2. Với rows có student_usernames → lookup student IDs → INSERT IGNORE class_members
+ *
+ * CSV format:
+ *   class_name,teacher_username,schedule,description,student_usernames
+ *   Lớp 7A,teacher1,"T3,T6",Giao tiếp,"nguyen;an;binh"
+ *
+ * student_usernames dùng `;` làm separator để không conflict với CSV comma.
+ * Các trường sau class_name đều optional (trừ teacher_username).
+ *
+ * Partial success: teacher_username không tồn tại / sai role → error cho row đó,
+ * vẫn insert các row OK.
+ */
+interface ImportClassRow {
+  row: number;
+  class_name: string;
+  teacher_username: string;
+  schedule: string | null;
+  description: string | null;
+  student_usernames: string[];
+}
+
+const CLASS_NAME_MAX_LENGTH = 128;
+const SCHEDULE_MAX_LENGTH = 64;
+
+function parseAndValidateImportClasses(csv: string): {
+  parsed: ImportClassRow[];
+  errors: { row: number; class_name: string; error: string }[];
+} {
+  const errors: { row: number; class_name: string; error: string }[] = [];
+  const rows = parseCsv(csv);
+  if (rows.length < 2) {
+    errors.push({ row: 0, class_name: "", error: "CSV phải có header + ít nhất 1 dòng dữ liệu." });
+    return { parsed: [], errors };
+  }
+  const headers = rows[0].map(normalizeHeader);
+  const idxOf = (name: string) => headers.indexOf(name);
+  const iName = idxOf("class_name");
+  const iTeacher = idxOf("teacher_username");
+  const iSchedule = idxOf("schedule");
+  const iDesc = idxOf("description");
+  const iStudents = idxOf("student_usernames");
+  for (const r of ["class_name", "teacher_username"] as const) {
+    if (idxOf(r) === -1) {
+      errors.push({
+        row: 0,
+        class_name: "",
+        error: `CSV thiếu cột bắt buộc: ${r}. Cột hiện có: ${headers.join(", ")}`,
+      });
+      return { parsed: [], errors };
+    }
+  }
+  const hasSchedule = iSchedule !== -1;
+  const hasDesc = iDesc !== -1;
+  const hasStudents = iStudents !== -1;
+
+  const parsed: ImportClassRow[] = [];
+  for (let i = 1; i < rows.length; i++) {
+    const cells = rows[i];
+    const className = (cells[iName] || "").trim();
+    if (!className) continue; // bỏ dòng trống
+    if (className.length > CLASS_NAME_MAX_LENGTH) {
+      errors.push({
+        row: i + 1,
+        class_name: className,
+        error: `class_name quá dài (>${CLASS_NAME_MAX_LENGTH})`,
+      });
+      continue;
+    }
+    const teacherUsername = (cells[iTeacher] || "").trim();
+    if (!teacherUsername) {
+      errors.push({
+        row: i + 1,
+        class_name: className,
+        error: "Thiếu teacher_username",
+      });
+      continue;
+    }
+    const schedule = hasSchedule ? ((cells[iSchedule] || "").trim() || null) : null;
+    if (schedule && schedule.length > SCHEDULE_MAX_LENGTH) {
+      errors.push({
+        row: i + 1,
+        class_name: className,
+        error: `schedule quá dài (>${SCHEDULE_MAX_LENGTH})`,
+      });
+      continue;
+    }
+    const description = hasDesc ? ((cells[iDesc] || "").trim() || null) : null;
+    const studentsRaw = hasStudents ? (cells[iStudents] || "").trim() : "";
+    const studentUsernames = studentsRaw
+      ? studentsRaw.split(";").map((s) => s.trim()).filter(Boolean)
+      : [];
+
+    parsed.push({
+      row: i + 1,
+      class_name: className,
+      teacher_username: teacherUsername,
+      schedule,
+      description,
+      student_usernames: studentUsernames,
+    });
+  }
+
+  if (parsed.length === 0) {
+    errors.push({ row: 0, class_name: "", error: "CSV không có dòng dữ liệu nào." });
+  }
+
+  // Duplicate class_name + teacher_username trong batch (không có UNIQUE constraint
+  // nhưng admin thường không muốn tạo 2 lớp trùng nhau cho cùng GV)
+  const seen = new Set<string>();
+  for (const r of parsed) {
+    const key = `${r.class_name}::${r.teacher_username}`;
+    if (seen.has(key)) {
+      errors.push({
+        row: r.row,
+        class_name: r.class_name,
+        error: `Trùng class_name + teacher_username trong file (dòng ${r.row})`,
+      });
+    }
+    seen.add(key);
+  }
+
+  return { parsed, errors };
+}
+
+adminRouter.post("/classes/import", async (req: Request, res: Response) => {
+  const admin = await requireRole(req, res, ["admin"]);
+  if (!admin) return;
+  const { csv } = req.body || {};
+  if (!csv || typeof csv !== "string") {
+    return res.status(400).json({ error: "Thiếu CSV content." });
+  }
+  if (Buffer.byteLength(csv, "utf8") > MAX_CSV_BYTES) {
+    return res.status(413).json({
+      error: `CSV quá lớn (>${MAX_CSV_BYTES / 1024 / 1024} MB).`,
+    });
+  }
+
+  let parsed: ImportClassRow[];
+  let errors: { row: number; class_name: string; error: string }[];
+  try {
+    ({ parsed, errors } = parseAndValidateImportClasses(csv));
+  } catch (e: any) {
+    return res.status(400).json({ error: `CSV không hợp lệ: ${e.message}` });
+  }
+
+  // Lookup teacher IDs theo batch (validate teacher tồn tại + role='teacher' + not deleted)
+  const teacherUsernames = [...new Set(parsed.map((r) => r.teacher_username))];
+  const teacherRows = (await query<RowDataPacket[]>(
+    `SELECT id, username, role, deleted_at FROM users WHERE username IN (${teacherUsernames
+      .map(() => "?")
+      .join(",")})`,
+    teacherUsernames
+  )) as RowDataPacket[];
+  const teacherByUsername = new Map(
+    teacherRows.map((t) => [t.username as string, t])
+  );
+
+  // Validate teacher + collect per-row errors
+  const linkErrors: { row: number; class_name: string; error: string }[] = [];
+  const validRows: ImportClassRow[] = [];
+  for (const r of parsed) {
+    const teacher = teacherByUsername.get(r.teacher_username);
+    if (!teacher) {
+      linkErrors.push({
+        row: r.row,
+        class_name: r.class_name,
+        error: `teacher_username "${r.teacher_username}" không tồn tại.`,
+      });
+    } else if (teacher.role !== "teacher" || teacher.deleted_at) {
+      linkErrors.push({
+        row: r.row,
+        class_name: r.class_name,
+        error: `"${r.teacher_username}" không phải GV hoặc đã bị xóa.`,
+      });
+    } else {
+      validRows.push(r);
+    }
+  }
+
+  if (validRows.length === 0) {
+    return res.status(400).json({
+      error: "Không có lớp nào hợp lệ để tạo.",
+      errors: [...errors, ...linkErrors],
+    });
+  }
+
+  // Sinh UUID + lookup all student usernames cùng lúc (1 round-trip)
+  const allStudentUsernames = [
+    ...new Set(validRows.flatMap((r) => r.student_usernames)),
+  ];
+  let studentByUsername = new Map<string, string>();
+  if (allStudentUsernames.length > 0) {
+    const studentRows = (await query<RowDataPacket[]>(
+      `SELECT id, username, role, deleted_at FROM users
+       WHERE username IN (${allStudentUsernames.map(() => "?").join(",")})
+         AND role='student' AND deleted_at IS NULL`,
+      allStudentUsernames
+    )) as RowDataPacket[];
+    studentByUsername = new Map(
+      studentRows.map((s) => [s.username as string, s.id as string])
+    );
+  }
+
+  // 2-phase insert trong transaction: classes trước, class_members sau
+  let classesCreated = 0;
+  let membersAdded = 0;
+  const memberErrors: { row: number; class_name: string; error: string }[] = [];
+  const createdClasses: {
+    row: number;
+    id: string;
+    class_name: string;
+    teacher_username: string;
+  }[] = [];
+
+  await withTransaction(async (conn) => {
+    // Phase 1: bulk INSERT classes
+    const prepared = validRows.map((r) => ({
+      row: r.row,
+      id: crypto.randomUUID(),
+      class_name: r.class_name,
+      teacher_username: r.teacher_username,
+      teacher_id: teacherByUsername.get(r.teacher_username)!.id as string,
+      schedule: r.schedule,
+      description: r.description,
+      student_usernames: r.student_usernames,
+    }));
+    for (let i = 0; i < prepared.length; i += BULK_INSERT_CHUNK) {
+      const chunk = prepared.slice(i, i + BULK_INSERT_CHUNK);
+      const placeholders = chunk.map(() => "(?,?,?,?,?)").join(",");
+      const params: any[] = [];
+      for (const c of chunk) {
+        params.push(c.id, c.class_name, c.teacher_id, c.schedule, c.description);
+      }
+      await conn.execute(
+        `INSERT INTO classes (id, name, teacher_id, schedule, description)
+         VALUES ${placeholders}`,
+        params
+      );
+      classesCreated += chunk.length;
+    }
+
+    // Phase 2: bulk INSERT IGNORE class_members.
+    // Dedupe trong batch (1 HS có thể list nhiều lần trong cùng 1 lớp) trước
+    // khi INSERT để tránh duplicate key error.
+    const linkPlan: { class_id: string; student_id: string }[] = [];
+    for (const c of prepared) {
+      const seenInRow = new Set<string>();
+      for (const username of c.student_usernames) {
+        if (seenInRow.has(username)) continue;
+        seenInRow.add(username);
+        const studentId = studentByUsername.get(username);
+        if (!studentId) {
+          memberErrors.push({
+            row: c.row,
+            class_name: c.class_name,
+            error: `student_username "${username}" không tồn tại hoặc không phải HS.`,
+          });
+          continue;
+        }
+        linkPlan.push({ class_id: c.id, student_id: studentId });
+      }
+    }
+
+    if (linkPlan.length > 0) {
+      for (let i = 0; i < linkPlan.length; i += BULK_INSERT_CHUNK) {
+        const chunk = linkPlan.slice(i, i + BULK_INSERT_CHUNK);
+        const placeholders = chunk.map(() => "(?,?)").join(",");
+        const params: any[] = [];
+        for (const l of chunk) params.push(l.class_id, l.student_id);
+        const [result] = await conn.query(
+          `INSERT IGNORE INTO class_members (class_id, student_id) VALUES ${placeholders}`,
+          params
+        );
+        membersAdded += (result as ResultSetHeader).affectedRows;
+      }
+    }
+
+    // Build per-class result (chỉ metadata, không per-class member count)
+    for (const c of prepared) {
+      createdClasses.push({
+        row: c.row,
+        id: c.id,
+        class_name: c.class_name,
+        teacher_username: c.teacher_username,
+      });
+    }
+  });
+
+  await logAudit({
+    actorId: admin.id,
+    action: "class.bulk_import",
+    targetType: "class",
+    targetId: null,
+    details: {
+      classes_created: classesCreated,
+      members_added: membersAdded,
+      error_count: errors.length + linkErrors.length + memberErrors.length,
+      class_names: createdClasses.map((c) => c.class_name),
+    },
+    ip: req.ip,
+  });
+
+  res.json({
+    ok: true,
+    summary: {
+      total: parsed.length,
+      classes_created: classesCreated,
+      members_added: membersAdded,
+    },
+    created: createdClasses,
+    errors: [...errors, ...linkErrors, ...memberErrors],
+  });
+});
+
 adminRouter.patch("/classes/:id", async (req: Request, res: Response) => {
   const admin = await requireRole(req, res, ["admin"]);
   if (!admin) return;

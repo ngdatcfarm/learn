@@ -55,6 +55,7 @@ import {
   ManageMembersModal,
   TestZaloModal,
   ImportUsersModal,
+  ImportClassesModal,
 } from "./AdminUserModals";
 
 type Section = "overview" | "users" | "classes" | "zalo" | "audio";
@@ -829,7 +830,7 @@ function ClassesSection({ onRefresh }: { onRefresh: () => Promise<void> | void }
   const [classes, setClasses] = useState<AdminClass[]>([]);
   const [teachers, setTeachers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
-  const [modal, setModal] = useState<"create" | null>(null);
+  const [modal, setModal] = useState<"create" | "import" | null>(null);
   const [editClass, setEditClass] = useState<AdminClass | null>(null);
   const [manageClass, setManageClass] = useState<AdminClass | null>(null);
 
@@ -896,7 +897,17 @@ function ClassesSection({ onRefresh }: { onRefresh: () => Promise<void> | void }
 
   return (
     <div className="space-y-3">
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <button
+          onClick={() => {
+            sound.playClick();
+            setModal("import");
+          }}
+          className="px-3 py-2 rounded-xl text-xs font-extrabold flex items-center gap-1.5"
+          style={{ backgroundColor: "var(--bg-elevated)", color: "var(--muted-strong)" }}
+        >
+          <Upload className="w-3.5 h-3.5" /> Import CSV
+        </button>
         <button
           onClick={() => {
             sound.playClick();
@@ -1009,6 +1020,15 @@ function ClassesSection({ onRefresh }: { onRefresh: () => Promise<void> | void }
             teachers={teachers}
             onClose={() => setModal(null)}
             onSubmit={handleCreate}
+          />
+        )}
+        {modal === "import" && (
+          <ImportClassesModal
+            onClose={() => setModal(null)}
+            onSuccess={async () => {
+              await load();
+              onRefresh();
+            }}
           />
         )}
         {editClass && (
