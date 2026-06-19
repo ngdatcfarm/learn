@@ -269,6 +269,10 @@
     socket.emit('call:answer', { sessionId, sdp: { type: 'answer', sdp: '(test)' } });
     log(side, '→ emit call:answer (TEST)', 'out');
   };
+
+  // Expose remaining functions to window for onclick handlers
+  window.prefillCaller = prefillCaller;
+  window.prefillCallee = prefillCallee;
 })();
 </script>
 </body>
