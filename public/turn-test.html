@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TURN Diagnostic — english.cfarm.vn</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      max-width: 960px;
+      margin: 24px auto;
+      padding: 0 16px;
+      color: #1f2937;
+    }
+    h1 { font-size: 20px; margin-bottom: 8px; }
+    .desc { color: #6b7280; margin-bottom: 16px; font-size: 14px; }
+    button {
+      background: #2563eb; color: white; border: 0;
+      padding: 10px 20px; border-radius: 8px; font-size: 14px;
+      cursor: pointer; font-weight: 500;
+    }
+    button:disabled { background: #9ca3af; cursor: not-allowed; }
+    pre {
+      background: #0f172a; color: #e2e8f0;
+      padding: 16px; border-radius: 8px;
+      font-family: "SF Mono", Consolas, monospace; font-size: 12px;
+      line-height: 1.5; white-space: pre-wrap;
+      max-height: 70vh; overflow: auto;
+      margin-top: 16px;
+    }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+    .badge.ok { background: #d1fae5; color: #065f46; }
+    .badge.fail { background: #fee2e2; color: #991b1b; }
+    .badge.info { background: #dbeafe; color: #1e40af; }
+    .summary { margin: 16px 0; padding: 12px; border-radius: 8px; background: #f3f4f6; font-size: 14px; }
+    .summary strong { font-family: "SF Mono", Consolas, monospace; }
+  </style>
+</head>
+<body>
+  <h1>TURN Diagnostic</h1>
+  <p class="desc">
+    Test xem browser có connect được TURN server (cfarm.vn coturn) không.
+    Phải đăng nhập trước ở <a href="/">trang chính</a>.
+  </p>
+  <button id="run">▶ Run diagnostic</button>
+  <div id="summary" class="summary" style="display:none"></div>
+  <pre id="out">Bấm "Run diagnostic" để bắt đầu…</pre>
+
+<script>
+(function () {
+  const out = document.getElementById('out');
+  const btn = document.getElementById('run');
+  const summary = document.getElementById('summary');
+  const candidates = [];
+
+  function log(s) {
+    out.textContent += s + '\n';
+    console.log('[TURN test]', s);
+  }
+
+  function clearLog() {
+    out.textContent = '';
+    summary.style.display = 'none';
+    candidates.length = 0;
+  }
+
+  function showSummary() {
+    const counts = { host: 0, srflx: 0, relay: 0, prflx: 0, other: 0 };
+    candidates.forEach(c => {
+      const t = c.type || 'other';
+      if (counts[t] !== undefined) counts[t]++; else counts.other++;
+    });
+
+    const relayOK = counts.relay > 0;
+    const verdict = relayOK
+      ? '<span class="badge ok">TURN OK</span> Browser có thể dùng TURN relay — voice/screen share cross-network sẽ work.'
+      : '<span class="badge fail">TURN FAIL</span> Không có relay candidate. TURN server không reachable từ browser (cloud firewall chặn port 3478, hoặc UDP bị block).';
+
+    summary.innerHTML = `
+      <div>${verdict}</div>
+      <div style="margin-top:8px">
+        <strong>host</strong>: ${counts.host} ·
+        <strong>srflx</strong> (STUN): ${counts.srflx} ·
+        <strong>relay</strong> (TURN): <strong>${counts.relay}</strong>${counts.relay === 0 ? ' ❌' : ' ✅'} ·
+        <strong>prflx</strong>: ${counts.prflx}
+      </div>
+    `;
+    summary.style.display = 'block';
+  }
+
+  btn.onclick = async () => {
+    clearLog();
+    btn.disabled = true;
+    btn.textContent = '⏳ Running…';
+
+    const token = localStorage.getItem('apex_auth_token');
+    if (!token) {
+      log('❌ Không có token trong localStorage — hãy đăng nhập ở trang chính trước.');
+      btn.disabled = false;
+      btn.textContent = '▶ Run diagnostic';
+      return;
+    }
+    log('✓ Token found: ' + token.slice(0, 20) + '...');
+
+    // 1. Fetch TURN credentials
+    let creds;
+    try {
+      const resp = await fetch('/api/live/help/turn-credentials', {
+        headers: { 'Authorization': 'Bearer ' + token }
+      });
+      log('→ GET /api/live/help/turn-credentials → ' + resp.status);
+      if (resp.status !== 200) {
+        const err = await resp.json().catch(() => ({}));
+        log('❌ ' + (err.error || resp.statusText));
+        btn.disabled = false;
+        btn.textContent = '▶ Run diagnostic';
+        return;
+      }
+      creds = await resp.json();
+      log('✓ TURN credentials OK');
+      log('  urls: ' + JSON.stringify(creds.urls));
+      log('  username: ' + creds.username);
+      log('  ttl: ' + creds.ttl + 's');
+    } catch (e) {
+      log('❌ Fetch TURN credentials failed: ' + e.message);
+      btn.disabled = false;
+      btn.textContent = '▶ Run diagnostic';
+      return;
+    }
+
+    // 2. Test DNS resolution
+    log('\n— Test DNS —');
+    try {
+      // Use a trick: create an RTCPeerConnection with just TURN URL, see if gathering even starts
+      // If DNS fails, browser won't even attempt
+      const probe = new RTCPeerConnection({ iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' }
+      ]});
+      await probe.createOffer();
+      await probe.setLocalDescription(probe.localDescription);
+      await new Promise(r => setTimeout(r, 500));
+      probe.close();
+      log('✓ DNS / basic RTC OK');
+    } catch (e) {
+      log('❌ Basic RTC test failed: ' + e.message);
+    }
+
+    // 3. Test TURN with all transports
+    log('\n— Test TURN candidates (UDP + TCP + TLS) —');
+    log('Đợi 15s để browser generate candidates...');
+    const pc = new RTCPeerConnection({
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'turn:english.cfarm.vn:3478?transport=udp', username: creds.username, credential: creds.credential },
+        { urls: 'turn:english.cfarm.vn:3478?transport=tcp', username: creds.username, credential: creds.credential },
+        { urls: 'turns:english.cfarm.vn:5349?transport=tcp', username: creds.username, credential: creds.credential },
+      ],
+    });
+    window.testPc = pc;
+
+    pc.onicecandidate = (e) => {
+      if (!e.candidate) {
+        log('✓ ICE gathering complete (candidate=null)');
+        return;
+      }
+      const c = e.candidate;
+      candidates.push(c);
+      log('ICE: ' + c.type + '/' + c.protocol + ' ' + c.address + ':' + c.port + ' (relay: ' + (c.relayProtocol || '-') + ')');
+    };
+    pc.onicegatheringstatechange = () => log('gathering state → ' + pc.iceGatheringState);
+    pc.oniceconnectionstatechange = () => log('connection state → ' + pc.iceConnectionState);
+    pc.onicecandidateerror = (e) => {
+      // 7xx errors are useful
+      log('⚠ candidate error: code=' + e.errorCode + ' (' + (e.errorText || '') + ') url=' + (e.url || ''));
+    };
+
+    pc.createDataChannel('test');
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+
+    // Wait 15s for gathering
+    await new Promise(r => setTimeout(r, 15000));
+
+    log('\n— Final —');
+    log('gathering state: ' + pc.iceGatheringState);
+    log('connection state: ' + pc.iceConnectionState);
+
+    showSummary();
+
+    btn.disabled = false;
+    btn.textContent = '▶ Run lại';
+  };
+})();
+</script>
+</body>
+</html>
