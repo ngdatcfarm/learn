@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type ReactNode, type FormEvent, type ChangeEvent } from "react";
+import { useState, useEffect, useRef, useCallback, type ReactNode, type FormEvent, type ChangeEvent } from "react";
 import { motion } from "motion/react";
 import { X, Check, Copy, FileText, Upload } from "lucide-react";
 import sound from "../utils/sound";
@@ -21,6 +21,9 @@ import {
   adminGetUser,
   adminAddParentLink,
   adminRemoveParentLink,
+  adminListParentLinkHistory,
+  adminRestoreParentLink,
+  ParentLinkHistoryEntry,
   adminTestZalo,
   adminImportUsers,
   adminImportClasses,
@@ -259,7 +262,7 @@ export function EditUserModal({
   onClose: () => void;
   onSubmit: (p: PatchUserPayload) => Promise<void>;
 }) {
-  const [tab, setTab] = useState<"info" | "relationships">("info");
+  const [tab, setTab] = useState<"info" | "relationships" | "history">("info");
   const [name, setName] = useState(user.name);
   const [level, setLevel] = useState(user.level || "Beginner");
   const [cefrLevel, setCefrLevel] = useState(user.cefr_level || "A1");
@@ -306,7 +309,7 @@ export function EditUserModal({
     <ModalShell
       title={`Sửa: ${user.name}`}
       onClose={onClose}
-      maxWidth={tab === "relationships" ? "max-w-2xl" : "max-w-lg"}
+      maxWidth={tab === "info" ? "max-w-lg" : "max-w-2xl"}
       footer={
         <>
           <button
@@ -340,6 +343,7 @@ export function EditUserModal({
             [
               { id: "info" as const, label: "Thông tin" },
               { id: "relationships" as const, label: "Quan hệ" },
+              { id: "history" as const, label: "📜 Lịch sử" },
             ]
           ).map((t) => {
             const active = tab === t.id;
@@ -454,8 +458,10 @@ export function EditUserModal({
             💡 Để đổi mật khẩu, dùng nút "Reset mật khẩu" ở danh sách.
           </p>
         </form>
-      ) : (
+      ) : tab === "relationships" ? (
         <RelationshipsSection user={user} />
+      ) : (
+        <ParentLinkHistorySection user={user} />
       )}
     </ModalShell>
   );
@@ -752,6 +758,162 @@ function RelationshipsSection({ user }: { user: AdminUser }) {
               </div>
             ))
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// ParentLinkHistorySection — tab "Lịch sử" trong EditUserModal (Step 10i)
+// Hiển thị các liên kết PH ↔ HS đã bị soft-delete + nút restore.
+// ============================================================
+
+function formatDateTimeVN(iso: string | null): string {
+  if (!iso) return "—";
+  // Convert UTC ISO → local VN date string (DD/MM/YYYY HH:mm)
+  const d = new Date(iso.replace(" ", "T") + "Z");
+  if (isNaN(d.getTime())) return iso;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function ParentLinkHistorySection({ user }: { user: AdminUser }) {
+  const [history, setHistory] = useState<ParentLinkHistoryEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [restoring, setRestoring] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await adminListParentLinkHistory({ user_id: user.id });
+      setHistory(res.history);
+    } catch (e) {
+      console.warn("Load parent link history failed:", e);
+    } finally {
+      setLoading(false);
+    }
+  }, [user.id]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const handleRestore = async (entry: ParentLinkHistoryEntry) => {
+    if (
+      !window.confirm(
+        `Khôi phục liên kết giữa "${entry.parent_name}" và "${entry.student_name}"?`
+      )
+    )
+      return;
+    setRestoring(`${entry.parent_id}/${entry.student_id}`);
+    try {
+      await adminRestoreParentLink(entry.parent_id, entry.student_id);
+      sound.playSuccess();
+      await load();
+    } catch (e: unknown) {
+      const msg =
+        e && typeof e === "object" && "error" in e
+          ? String((e as { error?: unknown }).error)
+          : null;
+      alert(msg || "Lỗi khi khôi phục liên kết.");
+    } finally {
+      setRestoring(null);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <span
+          className="text-xs font-extrabold uppercase tracking-wider"
+          style={{ color: "var(--muted-strong)" }}
+        >
+          {loading ? "Đang tải..." : `${history.length} liên kết đã xóa`}
+        </span>
+        <button
+          onClick={() => {
+            sound.playClick();
+            load();
+          }}
+          disabled={loading}
+          className="text-[10px] font-extrabold px-2 py-1 rounded-lg disabled:opacity-50"
+          style={{ backgroundColor: "var(--bg-elevated)", color: "var(--muted-strong)" }}
+        >
+          🔄 Làm mới
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="text-center py-6" style={{ color: "var(--muted)" }}>
+          Đang tải lịch sử...
+        </div>
+      ) : history.length === 0 ? (
+        <div
+          className="p-6 rounded-2xl border text-center space-y-2"
+          style={{ backgroundColor: "var(--bg-elevated)", borderColor: "var(--border)" }}
+        >
+          <div className="text-2xl">📜</div>
+          <p className="text-xs font-extrabold" style={{ color: "var(--muted-strong)" }}>
+            Chưa có liên kết nào bị xóa.
+          </p>
+          <p className="text-[10px]" style={{ color: "var(--muted)" }}>
+            Khi admin bỏ liên kết PH ↔ HS, mục này sẽ ghi lại để có thể khôi phục.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-1.5 max-h-96 overflow-y-auto">
+          {history.map((h) => {
+            const key = `${h.parent_id}/${h.student_id}`;
+            const isRestoring = restoring === key;
+            const relLabel = h.relationship ? RELATIONSHIP_LABEL[h.relationship] || h.relationship : null;
+            return (
+              <div
+                key={key}
+                className="p-3 rounded-xl border space-y-1.5"
+                style={{
+                  backgroundColor: "var(--bg-elevated)",
+                  borderColor: "var(--border)",
+                }}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-extrabold flex items-center gap-1.5 flex-wrap">
+                      <span>{h.parent_name}</span>
+                      <span style={{ color: "var(--muted)" }}>↔</span>
+                      <span>{h.student_name}</span>
+                      {relLabel && (
+                        <span
+                          className="text-[10px] font-extrabold px-1.5 py-0.5 rounded-md shrink-0"
+                          style={{
+                            backgroundColor: "var(--bg)",
+                            color: "var(--muted)",
+                          }}
+                        >
+                          {relLabel}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[10px]" style={{ color: "var(--muted)" }}>
+                      Liên kết {formatDateTimeVN(h.linked_at)} • Xóa {formatDateTimeVN(h.deleted_at)}
+                      {h.deleted_by_name ? ` bởi @${h.deleted_by_username || h.deleted_by_name}` : ""}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleRestore(h)}
+                    disabled={isRestoring}
+                    className="text-[10px] font-extrabold px-2 py-1 rounded-lg shrink-0 disabled:opacity-50"
+                    style={{
+                      backgroundColor: "var(--primary-soft)",
+                      color: "var(--primary)",
+                    }}
+                  >
+                    {isRestoring ? "..." : "↩ Khôi phục"}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

@@ -799,8 +799,55 @@ export async function adminAddParentLink(payload: {
 export async function adminRemoveParentLink(
   parentId: string,
   studentId: string
-): Promise<{ ok: true }> {
+): Promise<{ ok: true; deleted: boolean }> {
   return request("DELETE", `/api/admin/parent-links/${parentId}/${studentId}`);
+}
+
+/**
+ * GET /api/admin/parent-links/history — Step 10i.
+ * Lịch sử các liên kết PH ↔ HS đã soft-delete.
+ *
+ * Query:
+ *   - user_id?: filter theo user liên quan (là PH HOẶC HS)
+ *   - limit?: default 50, max 200
+ *
+ * Mỗi entry gồm thông tin PH/HS/relationship + linked_at + deleted_at + deleted_by (admin).
+ */
+export interface ParentLinkHistoryEntry {
+  parent_id: string;
+  parent_name: string;
+  parent_username: string;
+  student_id: string;
+  student_name: string;
+  student_username: string;
+  relationship: string | null;
+  linked_at: string;
+  deleted_at: string;
+  deleted_by_id: string | null;
+  deleted_by_name: string | null;
+  deleted_by_username: string | null;
+}
+
+export async function adminListParentLinkHistory(params: {
+  user_id?: string;
+  limit?: number;
+} = {}): Promise<{ history: ParentLinkHistoryEntry[]; count: number }> {
+  const search = new URLSearchParams();
+  if (params.user_id) search.set("user_id", params.user_id);
+  if (params.limit) search.set("limit", String(params.limit));
+  const qs = search.toString();
+  return request("GET", `/api/admin/parent-links/history${qs ? `?${qs}` : ""}`);
+}
+
+/**
+ * POST /api/admin/parent-links/:parentId/:studentId/restore — Step 10i.
+ * Restore soft-deleted link. 404 nếu link chưa bị xóa.
+ */
+export async function adminRestoreParentLink(
+  parentId: string,
+  studentId: string
+): Promise<{ ok: true }> {
+  return request("POST", `/api/admin/parent-links/${parentId}/${studentId}/restore`);
 }
 
 export async function adminGetZaloSettings(): Promise<{ settings: ZaloSettings }> {

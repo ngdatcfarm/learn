@@ -204,17 +204,18 @@ adminRouter.get("/users/:id", async (req: Request, res: Response) => {
   let children: RowDataPacket[] = [];
   let parents: RowDataPacket[] = [];
   if (user.role === "parent") {
+    // Step 10i: filter soft-deleted parent_links (chỉ hiện links đang active)
     children = (await query<RowDataPacket[]>(
       `SELECT u.id, u.name, u.username, u.level, u.cefr_level, pl.relationship
        FROM parent_links pl JOIN users u ON u.id = pl.student_id
-       WHERE pl.parent_id = ? AND u.deleted_at IS NULL`,
+       WHERE pl.parent_id = ? AND u.deleted_at IS NULL AND pl.deleted_at IS NULL`,
       [id]
     )) as RowDataPacket[];
   } else if (user.role === "student") {
     parents = (await query<RowDataPacket[]>(
       `SELECT u.id, u.name, u.username, pl.relationship
        FROM parent_links pl JOIN users u ON u.id = pl.parent_id
-       WHERE pl.student_id = ? AND u.deleted_at IS NULL`,
+       WHERE pl.student_id = ? AND u.deleted_at IS NULL AND pl.deleted_at IS NULL`,
       [id]
     )) as RowDataPacket[];
   }
@@ -294,24 +295,131 @@ adminRouter.post("/parent-links", async (req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
+/**
+ * DELETE /api/admin/parent-links/:parentId/:studentId — Soft-delete (Step 10i).
+ * Cập nhật deleted_at + deleted_by thay vì hard delete, để giữ lịch sử + restore.
+ * Idempotent: nếu link đã soft-delete rồi → không update lại (vẫn return 200).
+ * Audit `parent_link.remove` với deleted_at timestamp.
+ */
 adminRouter.delete(
   "/parent-links/:parentId/:studentId",
   async (req: Request, res: Response) => {
     const admin = await requireRole(req, res, ["admin"]);
     if (!admin) return;
     const { parentId, studentId } = req.params;
-    await query<ResultSetHeader>(
-      "DELETE FROM parent_links WHERE parent_id = ? AND student_id = ?",
-      [parentId, studentId]
+    const result = await query<ResultSetHeader>(
+      `UPDATE parent_links
+       SET deleted_at = NOW(), deleted_by = ?
+       WHERE parent_id = ? AND student_id = ? AND deleted_at IS NULL`,
+      [admin.id, parentId, studentId]
     );
     await logAudit({
       actorId: admin.id,
       action: "parent_link.remove",
       targetType: "parent_link",
       targetId: studentId,
-      details: { parent_id: parentId },
+      details: { parent_id: parentId, affected_rows: result.affectedRows },
       ip: req.ip,
     });
+    res.json({ ok: true, deleted: result.affectedRows > 0 });
+  }
+);
+
+/**
+ * GET /api/admin/parent-links/history?user_id=...
+ * Xem lịch sử các liên kết PH ↔ HS đã bị xóa (soft-deleted).
+ *
+ * Filter:
+ *   - Nếu có user_id → chỉ trả links liên quan tới user đó (là PH HOẶC là HS)
+ *   - Nếu không có → trả tất cả (admin xem toàn bộ)
+ *   - limit: mặc định 50, max 200
+ *
+ * Sort: deleted_at DESC (mới nhất trước)
+ * Join thêm users để có tên PH/HS + admin đã xóa.
+ */
+adminRouter.get("/parent-links/history", async (req: Request, res: Response) => {
+  const admin = await requireRole(req, res, ["admin"]);
+  if (!admin) return;
+  const userId = (req.query.user_id as string | undefined) || "";
+  const limit = Math.min(Number(req.query.limit) || 50, 200);
+
+  const where = ["pl.deleted_at IS NOT NULL"];
+  const params: any[] = [];
+  if (userId) {
+    where.push("(pl.parent_id = ? OR pl.student_id = ?)");
+    params.push(userId, userId);
+  }
+  const rows = (await query<RowDataPacket[]>(
+    `SELECT pl.parent_id, pl.student_id, pl.relationship,
+            pl.linked_at, pl.deleted_at, pl.deleted_by,
+            p.name AS parent_name, p.username AS parent_username,
+            s.name AS student_name, s.username AS student_username,
+            d.name AS deleted_by_name, d.username AS deleted_by_username
+     FROM parent_links pl
+     JOIN users p ON p.id = pl.parent_id
+     JOIN users s ON s.id = pl.student_id
+     LEFT JOIN users d ON d.id = pl.deleted_by
+     WHERE ${where.join(" AND ")}
+     ORDER BY pl.deleted_at DESC
+     LIMIT ${limit}`,
+    params
+  )) as RowDataPacket[];
+
+  const history = rows.map((r) => ({
+    parent_id: r.parent_id,
+    parent_name: r.parent_name,
+    parent_username: r.parent_username,
+    student_id: r.student_id,
+    student_name: r.student_name,
+    student_username: r.student_username,
+    relationship: r.relationship,
+    linked_at: r.linked_at,
+    deleted_at: r.deleted_at,
+    deleted_by_id: r.deleted_by,
+    deleted_by_name: r.deleted_by_name,
+    deleted_by_username: r.deleted_by_username,
+  }));
+
+  res.json({ history, count: history.length });
+});
+
+/**
+ * POST /api/admin/parent-links/:parentId/:studentId/restore — Restore soft-deleted link.
+ * Set deleted_at = NULL, deleted_by = NULL. Nếu link chưa bị xóa → 404.
+ * Audit `parent_link.restore` với previous_deleted_at.
+ */
+adminRouter.post(
+  "/parent-links/:parentId/:studentId/restore",
+  async (req: Request, res: Response) => {
+    const admin = await requireRole(req, res, ["admin"]);
+    if (!admin) return;
+    const { parentId, studentId } = req.params;
+
+    // Lấy thông tin trước khi restore (để audit + check exists)
+    const existing = await queryOne<RowDataPacket & { deleted_at: string | null }>(
+      `SELECT deleted_at FROM parent_links WHERE parent_id = ? AND student_id = ?`,
+      [parentId, studentId]
+    );
+    if (!existing || !existing.deleted_at) {
+      return res.status(404).json({ error: "Liên kết không tồn tại hoặc chưa bị xóa." });
+    }
+
+    await query<ResultSetHeader>(
+      `UPDATE parent_links
+       SET deleted_at = NULL, deleted_by = NULL
+       WHERE parent_id = ? AND student_id = ?`,
+      [parentId, studentId]
+    );
+
+    await logAudit({
+      actorId: admin.id,
+      action: "parent_link.restore",
+      targetType: "parent_link",
+      targetId: studentId,
+      details: { parent_id: parentId, previous_deleted_at: existing.deleted_at },
+      ip: req.ip,
+    });
+
     res.json({ ok: true });
   }
 );
