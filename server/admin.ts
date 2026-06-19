@@ -707,6 +707,7 @@ interface ImportRow {
   goal: string | null;
   daily_goal_minutes: number | null;
   phone: string | null;
+  parent_username: string | null; // optional, chỉ áp dụng khi role='student'
 }
 
 /**
@@ -741,6 +742,10 @@ function validateImportRow(row: ImportRow): string | null {
   }
   if (row.phone && !PHONE_REGEX.test(row.phone)) {
     return "phone không hợp lệ (9-15 chữ số, có thể có + ở đầu)";
+  }
+  // parent_username chỉ áp dụng cho HS. Nếu set trên role khác → lỗi rõ ràng.
+  if (row.parent_username && row.role !== "student") {
+    return `parent_username chỉ áp dụng cho role='student', không phải '${row.role}'`;
   }
   return null;
 }
@@ -785,12 +790,14 @@ function parseAndValidateImport(csv: string): {
   const iGoal = idxOf("goal");
   const iDaily = idxOf("daily_goal_minutes");
   const iPhone = idxOf("phone");
+  const iParent = idxOf("parent_username");
   const hasLevel = iLevel !== -1;
   const hasCefr = iCefr !== -1;
   const hasGoal = iGoal !== -1;
   const hasDaily = iDaily !== -1;
   const hasPhone = iPhone !== -1;
   const hasPass = iPass !== -1;
+  const hasParent = iParent !== -1;
 
   const parsed: ImportRow[] = [];
   for (let i = 1; i < rows.length; i++) {
@@ -817,6 +824,7 @@ function parseAndValidateImport(csv: string): {
       goal: hasGoal ? ((cells[iGoal] || "").trim() || null) : null,
       daily_goal_minutes: daily,
       phone: hasPhone ? ((cells[iPhone] || "").trim() || null) : null,
+      parent_username: hasParent ? ((cells[iParent] || "").trim() || null) : null,
     });
   }
 
@@ -908,11 +916,16 @@ adminRouter.post("/users/import", async (req: Request, res: Response) => {
       goal: r.goal,
       daily_goal_minutes: r.daily_goal_minutes ?? 15,
       phone: r.phone,
+      parent_username: r.parent_username,
     };
   });
 
   // Multi-row INSERT theo chunk. Tránh N+1 round-trips (1 round-trip / 500 rows
   // thay vì 1 round-trip / row). Cùng transaction để giữ atomicity.
+  // Nếu có student rows có parent_username → sau khi INSERT users xong,
+  // lookup parent IDs + bulk INSERT parent_links trong cùng transaction.
+  let linksCreated = 0;
+  const linkErrors: { row: number; username: string; error: string }[] = [];
   await withTransaction(async (conn) => {
     for (let i = 0; i < prepared.length; i += BULK_INSERT_CHUNK) {
       const chunk = prepared.slice(i, i + BULK_INSERT_CHUNK);
@@ -931,7 +944,77 @@ adminRouter.post("/users/import", async (req: Request, res: Response) => {
         params
       );
     }
+
+    // Phase 2: Auto-link PH ↔ HS cho student rows có parent_username.
+    // Lookup parent IDs trong cùng transaction (vừa insert users ở trên).
+    const linkCandidates = prepared.filter(
+      (c) => c.role === "student" && c.parent_username
+    );
+    if (linkCandidates.length > 0) {
+      const parentUsernames = [...new Set(linkCandidates.map((c) => c.parent_username!))];
+      const parentRows = (await conn.query(
+        `SELECT id, username, role, deleted_at FROM users WHERE username IN (?)`,
+        [parentUsernames]
+      )) as [RowDataPacket[], any];
+      const parentByUsername = new Map(
+        (parentRows[0] as RowDataPacket[]).map((p) => [p.username as string, p])
+      );
+
+      // Build valid links + collect errors
+      const validLinks: { row: number; student_id: string; parent_id: string }[] = [];
+      for (const c of linkCandidates) {
+        const parent = parentByUsername.get(c.parent_username!);
+        if (!parent) {
+          linkErrors.push({
+            row: c.row,
+            username: c.username,
+            error: `parent_username "${c.parent_username}" không tồn tại.`,
+          });
+          continue;
+        }
+        if (parent.role !== "parent" || parent.deleted_at) {
+          linkErrors.push({
+            row: c.row,
+            username: c.username,
+            error: `"${c.parent_username}" không phải PH hoặc đã bị xóa.`,
+          });
+          continue;
+        }
+        validLinks.push({ row: c.row, student_id: c.id, parent_id: parent.id as string });
+      }
+
+      // Bulk INSERT IGNORE parent_links (idempotent — bỏ qua nếu link đã tồn tại)
+      for (let i = 0; i < validLinks.length; i += BULK_INSERT_CHUNK) {
+        const chunk = validLinks.slice(i, i + BULK_INSERT_CHUNK);
+        const placeholders = chunk.map(() => "(?,?,?)").join(",");
+        const params: any[] = [];
+        for (const l of chunk) params.push(l.parent_id, l.student_id, null);
+        const [result] = await conn.query(
+          `INSERT IGNORE INTO parent_links (parent_id, student_id, relationship) VALUES ${placeholders}`,
+          params
+        );
+        linksCreated += (result as ResultSetHeader).affectedRows;
+      }
+    }
   });
+
+  // Nếu có link errors → trả 400 với errors[] (giống pattern parse errors).
+  // Vẫn trả created[] để admin biết users nào đã được tạo.
+  if (linkErrors.length > 0) {
+    return res.status(400).json({
+      error: `Đã tạo ${prepared.length} users nhưng ${linkErrors.length} liên kết PH↔HS thất bại.`,
+      errors: linkErrors,
+      created: prepared.map((c) => ({
+        row: c.row,
+        id: c.id,
+        username: c.username,
+        name: c.name,
+        role: c.role,
+        tempPassword: c.tempPassword,
+      })),
+      linksCreated,
+    });
+  }
 
   // Audit: targetId=null (intentional — bulk action không có single target)
   // KHÔNG log temp passwords (PII + security).
@@ -947,6 +1030,7 @@ adminRouter.post("/users/import", async (req: Request, res: Response) => {
         return acc;
       }, {}),
       usernames: prepared.map((c) => c.username),
+      links_created: linksCreated,
     },
     ip: req.ip,
   });
@@ -962,7 +1046,7 @@ adminRouter.post("/users/import", async (req: Request, res: Response) => {
 
   res.json({
     ok: true,
-    summary: { total: parsed.length, created: prepared.length },
+    summary: { total: parsed.length, created: prepared.length, links_created: linksCreated },
     created,
   });
 });

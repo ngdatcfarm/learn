@@ -1537,7 +1537,7 @@ export function ImportUsersModal({
   const [submitting, setSubmitting] = useState(false);
   const [errors, setErrors] = useState<ImportUsersError[] | null>(null);
   const [created, setCreated] = useState<ImportUserResult[] | null>(null);
-  const [summary, setSummary] = useState<{ total: number; created: number } | null>(null);
+  const [summary, setSummary] = useState<{ total: number; created: number; links_created: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFile = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -1704,7 +1704,7 @@ export function ImportUsersModal({
             className="text-xs font-extrabold flex items-center justify-between"
             style={{ color: "var(--success)" }}
           >
-            <span>✓ Tạo {summary.created}/{summary.total} users thành công</span>
+            <span>✓ Tạo {summary.created}/{summary.total} users{summary.links_created > 0 ? `, ${summary.links_created} liên kết PH↔HS` : ""}</span>
             <button
               type="button"
               onClick={handleCopyAll}

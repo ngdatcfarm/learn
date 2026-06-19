@@ -576,21 +576,23 @@ export async function adminResetPassword(
  * Body: { csv: string }
  *
  * CSV header (required): username, name, role
- * Optional columns: password, level, cefr_level, goal, daily_goal_minutes, phone
+ * Optional columns: password, level, cefr_level, goal, daily_goal_minutes, phone,
+ *                   parent_username (chỉ HS, auto-link với PH có username trùng)
  *
- * Atomic: nếu 1 row lỗi → 400 với errors[], KHÔNG insert gì.
- * User tạo ra mặc định có must_change_password=1 (an toàn khi admin dùng
- * temp password hoặc user tự cung cấp pass).
+ * Atomic: nếu 1 row lỗi validate → 400 với errors[], KHÔNG insert gì.
+ * Sau khi INSERT users thành công → tự động INSERT parent_links nếu student rows
+ * có parent_username (cùng transaction). Nếu parent_username không tồn tại / sai role
+ * → 400 với errors[] cho link failures, NHƯNG users vẫn đã được tạo (response kèm created[]).
  *
  * Response success:
  *   {
  *     ok: true,
- *     summary: { total, created },
+ *     summary: { total, created, links_created },
  *     created: [{ row, id, username, name, role, tempPassword }]
  *   }
  *
- * Response error:
- *   { error, errors: [{ row, username, error }] }
+ * Response error (validation OR link failures):
+ *   { error, errors: [{ row, username, error }], created?, links_created? }
  */
 export interface ImportUserResult {
   row: number;
@@ -603,7 +605,7 @@ export interface ImportUserResult {
 
 export interface ImportUsersResponse {
   ok: true;
-  summary: { total: number; created: number };
+  summary: { total: number; created: number; links_created: number };
   created: ImportUserResult[];
 }
 
