@@ -12,11 +12,10 @@
  *     → Current assignment context của HS (assignment + questions + submissions)
  *       cho GV chọn câu hỏi để mở whiteboard.
  *
- *   GET  /api/live/help/whiteboard/:sessionId/:questionId
- *     → Load strokes đã lưu (HS reopen session → xem lại bài giảng).
- *
- *   PUT  /api/live/help/whiteboard/:sessionId/:questionId
- *     → Save strokes (upsert). GV only. Auto-save on whiteboard:close (socket).
+ * Whiteboard endpoints (load/save strokes) nằm ở server/liveHelp.ts tại
+ *   GET /api/live/help/whiteboard/:sessionId/:questionId
+ *   PUT /api/live/help/whiteboard/:sessionId/:questionId
+ * vì whiteboard là resource của session, share giữa GV + HS.
  *
  * Status logic:
  *   - doing_today: last engagement_event < 5 phút trước
@@ -31,7 +30,6 @@
  * Audit (PII-safe):
  *   - teach.observe.start  → details: { session_id, student_id }
  *   - teach.observe.end    → details: { session_id, outcome, duration_sec }
- *   - teach.whiteboard.save → details: { session_id, question_id, stroke_count }
  */
 
 import { Router, Request, Response } from "express";
@@ -332,152 +330,7 @@ teachRouter.get(
   }
 );
 
-// ============================================================
-// Whiteboard REST (load + save)
-// ============================================================
-
-interface WhiteboardRow extends RowDataPacket {
-  id: string;
-  live_help_session_id: string;
-  question_id: string;
-  teacher_id: string;
-  strokes_json: string;
-  created_at: string;
-  updated_at: string;
-}
-
-/**
- * GET /api/live/help/whiteboard/:sessionId/:questionId
- *
- * Load strokes đã lưu cho 1 (session, question).
- * HS + GV của session đều đọc được (verify session access).
- */
-teachRouter.get(
-  "/whiteboard/:sessionId/:questionId",
-  async (req: Request, res: Response) => {
-    const user = await requireRole(req, res, ["student", "teacher"]);
-    if (!user) return;
-
-    const { sessionId, questionId } = req.params;
-
-    const session = await queryOne<
-      RowDataPacket & {
-        student_id: string;
-        teacher_id: string;
-        status: string;
-      }
-    >(
-      `SELECT student_id, teacher_id, status FROM live_help_sessions WHERE id = ?`,
-      [sessionId]
-    );
-    if (!session) {
-      return res.status(404).json({ error: "Session không tồn tại." });
-    }
-    if (user.role === "student" && session.student_id !== user.id) {
-      return res
-        .status(403)
-        .json({ error: "Bạn không phải HS của session này." });
-    }
-    if (user.role === "teacher" && session.teacher_id !== user.id) {
-      return res
-        .status(403)
-        .json({ error: "Bạn không phải GV của session này." });
-    }
-
-    const row = await queryOne<WhiteboardRow>(
-      `SELECT id, live_help_session_id, question_id, teacher_id,
-              strokes_json, created_at, updated_at
-       FROM live_help_whiteboards
-       WHERE live_help_session_id = ? AND question_id = ?`,
-      [sessionId, questionId]
-    );
-
-    if (!row) {
-      return res.json({ strokes: [], count: 0 });
-    }
-
-    let strokes: any[] = [];
-    try {
-      strokes = JSON.parse(row.strokes_json);
-    } catch {
-      strokes = [];
-    }
-
-    res.json({
-      strokes,
-      count: strokes.length,
-      updated_at: row.updated_at,
-    });
-  }
-);
-
-/**
- * PUT /api/live/help/whiteboard/:sessionId/:questionId
- *
- * Save (upsert) strokes. Body: { strokes: [...] }
- * GV only. Validate session access + status.
- */
-teachRouter.put(
-  "/whiteboard/:sessionId/:questionId",
-  async (req: Request, res: Response) => {
-    const teacher = await requireRole(req, res, ["teacher"]);
-    if (!teacher) return;
-
-    const { sessionId, questionId } = req.params;
-    const strokes = req.body?.strokes;
-    if (!Array.isArray(strokes)) {
-      return res.status(400).json({ error: "strokes phải là array." });
-    }
-    if (strokes.length > 5000) {
-      return res
-        .status(400)
-        .json({ error: "Quá nhiều strokes (max 5000)." });
-    }
-
-    // Verify session access
-    const session = await queryOne<
-      RowDataPacket & { teacher_id: string; status: string }
-    >(
-      `SELECT teacher_id, status FROM live_help_sessions WHERE id = ?`,
-      [sessionId]
-    );
-    if (!session) {
-      return res.status(404).json({ error: "Session không tồn tại." });
-    }
-    if (session.teacher_id !== teacher.id) {
-      return res
-        .status(403)
-        .json({ error: "Bạn không phải GV của session này." });
-    }
-    if (session.status === "ended") {
-      return res
-        .status(409)
-        .json({ error: "Session đã kết thúc — không thể save." });
-    }
-
-    const strokesJson = JSON.stringify(strokes);
-    const now = new Date().toISOString().slice(0, 19).replace("T", " ");
-
-    // Upsert: insert nếu chưa có, update nếu đã có (theo UNIQUE KEY)
-    await query<ResultSetHeader>(
-      `INSERT INTO live_help_whiteboards
-         (id, live_help_session_id, question_id, teacher_id, strokes_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-         strokes_json = VALUES(strokes_json),
-         updated_at = VALUES(updated_at)`,
-      [crypto.randomUUID(), sessionId, questionId, teacher.id, strokesJson, now, now]
-    );
-
-    await logAudit({
-      actorId: teacher.id,
-      action: "teach.whiteboard.save",
-      targetType: "live_help_whiteboard",
-      targetId: sessionId,
-      details: { question_id: questionId, stroke_count: strokes.length },
-      ip: req.ip,
-    });
-
-    res.json({ ok: true, count: strokes.length });
-  }
-);
+// Whiteboard endpoints moved to server/liveHelp.ts (mount tại /api/live/help).
+// Lý do: whiteboard là resource của session, share giữa GV + HS — đặt tại
+// /api/live/help/whiteboard/:sessionId/:questionId cho nhất quán với hint/
+// highlight endpoints hiện có.
