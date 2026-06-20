@@ -35,7 +35,7 @@ import {
 import sound from "../utils/sound";
 import { formatSkillValue } from "../utils/format";
 import KpiCard from "./ui/KpiCard";
-import { TeacherLiveHelpPane } from "./livehelp";
+import { TeacherLiveHelpPane, ObserveModePane } from "./livehelp";
 
 const SAVED_CLASS_KEY = "apex_teacher_class";
 
@@ -99,6 +99,9 @@ export default function TeacherDashboard() {
   // Live Help (Step 12a): teacher queue + active session pane
   const [liveHelpQueue, setLiveHelpQueue] = useState<LiveHelpSession[]>([]);
   const [activeHelpSession, setActiveHelpSession] = useState<LiveHelpSession | null>(null);
+
+  // Step 12d P3: observe mode — full-screen pane mount khi GV click "Vào xem"
+  const [observingStudent, setObservingStudent] = useState<ActiveStudent | null>(null);
 
   const loadLiveHelpQueue = useCallback(async () => {
     try {
@@ -285,12 +288,7 @@ export default function TeacherDashboard() {
 
       {/* Step 12d: Lớp đang học — GV-driven classroom observe */}
       <LiveStudentsSection
-        onObserveStudent={(sid) => {
-          // Phase 2 stub: Phase 3 sẽ thay bằng navigate tới /observe/:studentId
-          // (mở observe mode với voice auto-connect + whiteboard).
-          console.log("[Phase 2 stub] Click observe student:", sid);
-          alert("Sắp vào quan sát HS này.\n\nTính năng Observe Mode (voice + whiteboard) sẽ được kích hoạt sau khi Phase 3 hoàn thành.");
-        }}
+        onObserveStudent={(student) => setObservingStudent(student)}
       />
 
       <ClassSection
@@ -319,6 +317,16 @@ export default function TeacherDashboard() {
             session={activeHelpSession}
             onClose={() => setActiveHelpSession(null)}
             onEnded={loadLiveHelpQueue}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Step 12d P3: Observe Mode pane (GV-driven) */}
+      <AnimatePresence>
+        {observingStudent && (
+          <ObserveModePane
+            student={observingStudent}
+            onClose={() => setObservingStudent(null)}
           />
         )}
       </AnimatePresence>
@@ -989,7 +997,7 @@ function ProactiveHelpSection({
 function LiveStudentsSection({
   onObserveStudent,
 }: {
-  onObserveStudent: (studentId: string) => void;
+  onObserveStudent: (student: ActiveStudent) => void;
 }) {
   const [data, setData] = useState<{
     students: ActiveStudent[];
@@ -1092,7 +1100,7 @@ function LiveStudentsSection({
             <StudentLiveRow
               key={s.id}
               student={s}
-              onClick={() => onObserveStudent(s.id)}
+              onClick={() => onObserveStudent(s)}
             />
           ))}
         </ul>
