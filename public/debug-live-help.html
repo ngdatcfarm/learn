@@ -421,6 +421,7 @@
         <button class="ghost sm" onclick="presetApi('GET','/api/live/help/mine')">help/mine</button>
         <button class="ghost sm" onclick="presetApi('GET','/api/debug/live-help/sessions')">debug/sessions</button>
         <button class="ghost sm" onclick="presetApi('GET','/api/dashboard/teacher')">dashboard/teacher</button>
+        <button class="ghost sm" onclick="diagnoseUser()" title="Paste user_id vào URL field rồi bấm">🔎 Diagnose user</button>
       </div>
       <h2 style="margin-top:16px;">Response
         <span id="api-status" class="badge gray" style="margin-left:8px;">—</span>
@@ -902,6 +903,67 @@ function presetApi(method, url) {
   if (method === "GET" || method === "DELETE") {
     document.getElementById("api-body").value = "";
   }
+}
+
+/**
+ * Diagnose user_id: gọi 3 endpoint song song để xem tại sao HS không lên doing_today.
+ * Yêu cầu: paste user_id (full UUID) vào URL field trước.
+ */
+async function diagnoseUser() {
+  const raw = document.getElementById("api-url").value.trim();
+  // Cho phép paste cả UUID thuần hoặc 1 URL có chứa UUID
+  const m = raw.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+  if (!m) {
+    alert("Paste full user_id (UUID) vào ô URL trước rồi bấm Diagnose");
+    return;
+  }
+  const userId = m[0];
+  const statusEl = document.getElementById("api-status");
+  const respEl = document.getElementById("api-response");
+  const timeEl = document.getElementById("api-time");
+  statusEl.className = "badge yellow";
+  statusEl.textContent = "Diagnosing…";
+  timeEl.textContent = "";
+  respEl.innerHTML = "Loading…";
+
+  const t0 = performance.now();
+  const [events, active, sessions] = await Promise.all([
+    api("GET", `/api/debug/engagement/events?user_id=${userId}&limit=5`),
+    api("GET", `/api/live/teach/active-students`),
+    api("GET", `/api/debug/live-help/sessions?limit=10`),
+  ]);
+  const ms = Math.round(performance.now() - t0);
+  timeEl.textContent = ms + " ms";
+
+  const inActive = active.ok
+    ? (active.json?.students || []).find((s) => s.id === userId)
+    : null;
+  const userSessions = sessions.ok
+    ? (sessions.json?.sessions || []).filter(
+        (s) => s.student_id === userId || s.teacher_id === userId
+      )
+    : [];
+
+  const report = {
+    user_id: userId,
+    now_server_utc: new Date().toISOString(),
+    diagnose: {
+      "1_event_count_today_for_user":
+        events.json?.count ?? `ERR ${events.status}`,
+      "2_appears_in_active_students":
+        inActive
+          ? `YES — status=${inActive.status}, last_activity_minutes_ago=${inActive.last_activity_minutes_ago}, class=${inActive.class_name}`
+          : "NO — HS không có trong list teacher dashboard (có thể chưa thuộc class nào, hoặc bị soft-delete)",
+      "3_live_help_sessions_involving_user":
+        userSessions.length === 0 ? "NONE" : userSessions.length,
+    },
+    recent_events: events.json?.events || events.json?.error,
+    active_student_row: inActive || null,
+    user_sessions: userSessions,
+  };
+  statusEl.className = "badge green";
+  statusEl.textContent = "Diagnosed";
+  respEl.innerHTML = syntaxHighlight(report);
 }
 
 async function sendApiRequest() {
