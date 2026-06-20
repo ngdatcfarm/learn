@@ -59,6 +59,7 @@ interface StudentWithStatusRow extends RowDataPacket {
   class_id: string;
   class_name: string;
   last_activity_at: string | null;
+  last_activity_minutes_ago: number | null;
   tasks_done_today: number;
   minutes_today: number;
   currently_observed_by: string | null;
@@ -79,28 +80,28 @@ teachRouter.get("/active-students", async (req: Request, res: Response) => {
   const teacher = await requireRole(req, res, ["teacher", "admin"]);
   if (!teacher) return;
 
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-  const todayStartSql = todayStart.toISOString().slice(0, 19).replace("T", " ");
-
   const whereClause =
     teacher.role === "teacher" ? "WHERE c.teacher_id = ?" : "";
   const params: any[] = teacher.role === "teacher" ? [teacher.id] : [];
 
+  // FIX timezone: dùng CURDATE() + TIMESTAMPDIFF của MySQL để mọi so sánh thời gian
+  // đều self-consistent (cùng 1 clock). Trước đây client-side Date.now() vs
+  // mysql2 string parse gây drift do Node UTC vs MySQL session timezone khác nhau.
   const rows = await query<StudentWithStatusRow[]>(
     `SELECT
        u.id, u.name, u.username, u.level, u.cefr_level, u.goal,
        c.id AS class_id, c.name AS class_name,
        MAX(ee.occurred_at) AS last_activity_at,
-       SUM(CASE WHEN ee.event='task_done' AND ee.occurred_at >= ? THEN 1 ELSE 0 END) AS tasks_done_today,
-       SUM(CASE WHEN ee.event='session_end' AND ee.occurred_at >= ? THEN ee.value ELSE 0 END) AS minutes_today,
+       TIMESTAMPDIFF(MINUTE, MAX(ee.occurred_at), NOW()) AS last_activity_minutes_ago,
+       SUM(CASE WHEN ee.event='task_done' AND ee.occurred_at >= CURDATE() THEN 1 ELSE 0 END) AS tasks_done_today,
+       SUM(CASE WHEN ee.event='session_end' AND ee.occurred_at >= CURDATE() THEN ee.value ELSE 0 END) AS minutes_today,
        obs.teacher_id AS currently_observed_by,
        obs_t.name AS currently_observed_name
      FROM users u
      JOIN class_members cm ON cm.student_id = u.id
      JOIN classes c ON c.id = cm.class_id
      LEFT JOIN engagement_events ee
-       ON ee.user_id = u.id AND ee.occurred_at >= ?
+       ON ee.user_id = u.id AND ee.occurred_at >= CURDATE()
      LEFT JOIN (
        SELECT student_id, teacher_id
        FROM live_help_sessions
@@ -111,16 +112,16 @@ teachRouter.get("/active-students", async (req: Request, res: Response) => {
      GROUP BY u.id, c.id, c.name, u.name, u.username, u.level, u.cefr_level, u.goal,
               obs.teacher_id, obs_t.name
      ORDER BY u.name`,
-    [todayStartSql, todayStartSql, todayStartSql, ...params]
+    params
   );
 
-  const now = Date.now();
   const students = rows.map((r) => {
     let status: ObserveStatus;
     let last_activity_minutes_ago: number | null = null;
-    if (r.last_activity_at) {
-      const lastMs = new Date(r.last_activity_at).getTime();
-      const diffMin = (now - lastMs) / 60000;
+    // last_activity_minutes_ago từ SQL TIMESTAMPDIFF — null nếu không có event hôm nay.
+    // Có thể NEGATIVE nếu inject occurred_at trong tương lai — coerce thành 0 (= now).
+    if (r.last_activity_at != null && r.last_activity_minutes_ago != null) {
+      const diffMin = Math.max(0, Number(r.last_activity_minutes_ago));
       last_activity_minutes_ago = Math.round(diffMin);
       if (diffMin < 5) status = "doing_today";
       else if (diffMin < 30) status = "idle";

@@ -342,15 +342,21 @@ debugRouter.post("/engagement/inject", async (req: Request, res: Response) => {
   const eventId = crypto.randomUUID();
   const valNum = value == null ? null : Number(value);
 
-  // Compute occurred_at bằng cách convert sang MySQL DATETIME format
-  const occurredAt = new Date(Date.now() - ago * 60000);
-  const occurredAtSql = occurredAt.toISOString().slice(0, 19).replace("T", " ");
-
+  // Dùng SQL expression `NOW() - INTERVAL ? MINUTE` để consistent với engagement.ts
+  // (column default CURRENT_TIMESTAMP). Tránh drift giữa client-side toISOString()
+  // (Node timezone) vs MySQL server timezone.
   await query<ResultSetHeader>(
     `INSERT INTO engagement_events (id, user_id, event, value, occurred_at)
-     VALUES (?, ?, ?, ?, ?)`,
-    [eventId, user_id, event, valNum, occurredAtSql]
+     VALUES (?, ?, ?, ?, NOW() - INTERVAL ? MINUTE)`,
+    [eventId, user_id, event, valNum, ago]
   );
+
+  // Đọc lại occurred_at vừa insert để trả về (string format từ MySQL, consistent)
+  const inserted = await queryOne<RowDataPacket & { occurred_at: string }>(
+    `SELECT occurred_at FROM engagement_events WHERE id = ?`,
+    [eventId]
+  );
+  const occurredAtSql = inserted?.occurred_at ?? "(unknown)";
 
   await logAudit({
     actorId: admin.id,
