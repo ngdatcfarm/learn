@@ -130,6 +130,11 @@ export function initLiveHelpSocket(): Namespace {
     const user = socket.data.user as SocketUser;
     console.log(`[live-help socket] ${user.role}/${user.id} connected (${socket.id})`);
 
+    // Join user-room (mỗi user có 1 room riêng `user:${userId}`).
+    // Dùng để server gửi observe:incoming + screen:request-capture tới 1 user
+    // cụ thể mà không cần biết socket id (vd: HS có nhiều tab).
+    socket.join(`user:${user.id}`);
+
     // ---- session:join ----
     socket.on("session:join", async (payload: { sessionId?: string }) => {
       try {
@@ -343,6 +348,473 @@ export function initLiveHelpSocket(): Namespace {
         return socket.emit("error", { message: "Only student can stop screen share" });
       }
       await forwardSignal("call:screen-stop", p);
+    });
+
+    // ============================================================
+    // Step 12d — Teacher Observation Mode (GV-driven)
+    //   - observe:start / observe:accept / observe:reject / observe:end
+    //   - screen:state (HS → GV), screen:request-capture (GV → HS)
+    //   - whiteboard:open / :stroke / :clear / :close
+    //
+    // Lock semantics: 1 HS / 1 observe tại 1 thời điểm (check active session).
+    // observe session dùng trigger='teacher_observe' trong live_help_sessions.
+    // Strokes persist qua REST PUT /api/live/help/whiteboard/:sessionId/:questionId.
+    // ============================================================
+
+    // ---- observe:start (teacher) ----
+    socket.on("observe:start", async (payload: { studentId?: string; assignmentId?: string }) => {
+      try {
+        if (user.role !== "teacher") {
+          return socket.emit("error", { message: "Only teacher can observe" });
+        }
+        const studentId = payload?.studentId;
+        if (!studentId) {
+          return socket.emit("error", { message: "Missing studentId" });
+        }
+
+        // Verify HS in teacher's class
+        const inClass = await queryOne<RowDataPacket>(
+          `SELECT 1 FROM class_members cm
+           JOIN classes c ON c.id = cm.class_id
+           WHERE cm.student_id = ? AND c.teacher_id = ? LIMIT 1`,
+          [studentId, user.id]
+        );
+        if (!inClass) {
+          return socket.emit("observe:error", {
+            message: "HS không ở lớp bạn dạy.",
+          });
+        }
+
+        // Lock check: HS đã có active observe session chưa?
+        const existing = await queryOne<
+          RowDataPacket & { id: string; teacher_id: string }
+        >(
+          `SELECT id, teacher_id FROM live_help_sessions
+           WHERE student_id = ? AND \`trigger\`='teacher_observe' AND status='active'
+           LIMIT 1`,
+          [studentId]
+        );
+        if (existing) {
+          if (existing.teacher_id === user.id) {
+            return socket.emit("observe:error", {
+              message: "Bạn đang observe HS này rồi.",
+              session_id: existing.id,
+            });
+          }
+          return socket.emit("observe:error", {
+            message: "HS đang được GV khác observe. Vui lòng đợi hoặc chọn HS khác.",
+          });
+        }
+
+        // Lấy class_id (lớp GV dạy HS này)
+        const classRow = await queryOne<
+          RowDataPacket & { class_id: string; teacher_name: string }
+        >(
+          `SELECT cm.class_id, u.name AS teacher_name
+           FROM class_members cm
+           JOIN classes c ON c.id = cm.class_id
+           JOIN users u ON u.id = ?
+           WHERE cm.student_id = ? AND c.teacher_id = ?
+           ORDER BY cm.joined_at ASC LIMIT 1`,
+          [user.id, studentId, user.id]
+        );
+
+        const sessionId = crypto.randomUUID();
+        const now = new Date().toISOString().slice(0, 19).replace("T", " ");
+        await query(
+          `INSERT INTO live_help_sessions
+             (id, class_id, student_id, teacher_id, assignment_id, \`trigger\`, \`level\`, status, started_at, created_at)
+           VALUES (?, ?, ?, ?, ?, 'teacher_observe', 'mixed', 'active', ?, ?)`,
+          [
+            sessionId,
+            classRow?.class_id ?? null,
+            studentId,
+            user.id,
+            payload.assignmentId ?? null,
+            now,
+            now,
+          ]
+        );
+
+        // Get HS info
+        const student = await queryOne<
+          RowDataPacket & { name: string; username: string }
+        >(
+          `SELECT name, username FROM users WHERE id = ? AND deleted_at IS NULL`,
+          [studentId]
+        );
+
+        // GV join session room trước
+        await socket.join(`session:${sessionId}`);
+        socket.emit("observe:started", {
+          session_id: sessionId,
+          student_id: studentId,
+          student_name: student?.name ?? "",
+          started_at: now,
+        });
+
+        // Push observe:incoming tới HS user-room (HS auto-accepts sau)
+        liveHelpNs.to(`user:${studentId}`).emit("observe:incoming", {
+          session_id: sessionId,
+          teacher_id: user.id,
+          teacher_name: classRow?.teacher_name ?? "GV",
+          student_id: studentId,
+          student_name: student?.name ?? "",
+          assignment_id: payload.assignmentId ?? null,
+          started_at: now,
+        });
+
+        await logAudit({
+          actorId: user.id,
+          action: "teach.observe.start",
+          targetType: "live_help_session",
+          targetId: sessionId,
+          details: {
+            student_id: studentId,
+            assignment_id: payload.assignmentId ?? null,
+          },
+        });
+      } catch (err: any) {
+        console.error("[live-help socket] observe:start failed:", err);
+        socket.emit("observe:error", { message: err.message });
+      }
+    });
+
+    // ---- observe:accept (student) ----
+    socket.on("observe:accept", async (payload: { sessionId?: string }) => {
+      try {
+        if (user.role !== "student") {
+          return socket.emit("error", { message: "Only student can accept" });
+        }
+        const sessionId = payload?.sessionId;
+        if (!sessionId) {
+          return socket.emit("error", { message: "Missing sessionId" });
+        }
+
+        const session = await queryOne<
+          RowDataPacket & {
+            student_id: string;
+            teacher_id: string;
+            status: string;
+          }
+        >(
+          `SELECT student_id, teacher_id, status FROM live_help_sessions WHERE id = ?`,
+          [sessionId]
+        );
+        if (!session || session.student_id !== user.id) {
+          return socket.emit("observe:error", {
+            message: "Session không tồn tại / không phải của bạn.",
+          });
+        }
+        if (session.status !== "active") {
+          return socket.emit("observe:error", {
+            message: "Session không active.",
+          });
+        }
+
+        // HS join session room
+        await socket.join(`session:${sessionId}`);
+
+        // Broadcast observe:ready tới cả room (GV + HS)
+        liveHelpNs.to(`session:${sessionId}`).emit("observe:ready", {
+          session_id: sessionId,
+          student_id: user.id,
+        });
+      } catch (err: any) {
+        console.error("[live-help socket] observe:accept failed:", err);
+        socket.emit("observe:error", { message: err.message });
+      }
+    });
+
+    // ---- observe:reject (student) ----
+    socket.on("observe:reject", async (payload: { sessionId?: string; reason?: string }) => {
+      try {
+        if (user.role !== "student") {
+          return socket.emit("error", { message: "Only student can reject" });
+        }
+        const sessionId = payload?.sessionId;
+        if (!sessionId) {
+          return socket.emit("error", { message: "Missing sessionId" });
+        }
+
+        const session = await queryOne<
+          RowDataPacket & {
+            student_id: string;
+            teacher_id: string;
+            status: string;
+          }
+        >(
+          `SELECT student_id, teacher_id, status FROM live_help_sessions WHERE id = ?`,
+          [sessionId]
+        );
+        if (!session || session.student_id !== user.id) {
+          return socket.emit("observe:error", {
+            message: "Session không tồn tại.",
+          });
+        }
+        if (session.status !== "active") return;
+
+        const now = new Date().toISOString().slice(0, 19).replace("T", " ");
+        await query(
+          `UPDATE live_help_sessions
+           SET status='ended', ended_at=?, outcome='gave_up'
+           WHERE id = ?`,
+          [now, sessionId]
+        );
+
+        // Notify GV (HS may not be in session room yet, use user-room backup)
+        liveHelpNs.to(`session:${sessionId}`).emit("observe:rejected", {
+          session_id: sessionId,
+          student_id: user.id,
+          reason: payload.reason ?? null,
+        });
+
+        await logAudit({
+          actorId: user.id,
+          action: "teach.observe.reject",
+          targetType: "live_help_session",
+          targetId: sessionId,
+          details: { reason: payload.reason ?? null },
+        });
+      } catch (err: any) {
+        console.error("[live-help socket] observe:reject failed:", err);
+        socket.emit("observe:error", { message: err.message });
+      }
+    });
+
+    // ---- observe:end (either) ----
+    socket.on("observe:end", async (payload: { sessionId?: string; outcome?: string }) => {
+      try {
+        const sessionId = payload?.sessionId;
+        if (!sessionId) {
+          return socket.emit("error", { message: "Missing sessionId" });
+        }
+        const session = await queryOne<
+          RowDataPacket & {
+            student_id: string;
+            teacher_id: string;
+            status: string;
+            started_at: string | null;
+          }
+        >(
+          `SELECT student_id, teacher_id, status, started_at FROM live_help_sessions WHERE id = ?`,
+          [sessionId]
+        );
+        if (!session) {
+          return socket.emit("observe:error", {
+            message: "Session không tồn tại.",
+          });
+        }
+        if (session.status === "ended") return;
+
+        // Verify caller is teacher or student of session
+        if (user.id !== session.teacher_id && user.id !== session.student_id) {
+          return socket.emit("observe:error", { message: "Forbidden" });
+        }
+
+        // Default outcome
+        let outcome = payload.outcome;
+        if (!outcome) {
+          outcome = user.id === session.teacher_id ? "teacher_left" : "understood";
+        }
+        const allowed = ["understood", "gave_up", "timeout", "teacher_left"];
+        if (!allowed.includes(outcome)) outcome = "teacher_left";
+
+        const now = new Date().toISOString().slice(0, 19).replace("T", " ");
+        await query(
+          `UPDATE live_help_sessions
+           SET status='ended', ended_at=?, outcome=?
+           WHERE id = ?`,
+          [now, outcome, sessionId]
+        );
+
+        // Duration for audit
+        const durationSec = session.started_at
+          ? Math.round((Date.now() - new Date(session.started_at).getTime()) / 1000)
+          : null;
+
+        // Broadcast ended event
+        liveHelpNs.to(`session:${sessionId}`).emit("observe:ended", {
+          session_id: sessionId,
+          outcome,
+          ended_by_role: user.role,
+          duration_sec: durationSec,
+        });
+
+        await logAudit({
+          actorId: user.id,
+          action: "teach.observe.end",
+          targetType: "live_help_session",
+          targetId: sessionId,
+          details: {
+            outcome,
+            ended_by_role: user.role,
+            duration_sec: durationSec,
+          },
+        });
+      } catch (err: any) {
+        console.error("[live-help socket] observe:end failed:", err);
+        socket.emit("observe:error", { message: err.message });
+      }
+    });
+
+    // ---- screen:state (HS → GV) — periodic JSON snapshot ----
+    // HS gửi state mỗi ~1.5s. Server forward tới GV trong room (không persist).
+    socket.on("screen:state", async (payload: { sessionId?: string; state?: unknown }) => {
+      try {
+        if (user.role !== "student") {
+          return socket.emit("error", { message: "Only student emits screen:state" });
+        }
+        const sessionId = payload?.sessionId;
+        if (!sessionId) {
+          return socket.emit("error", { message: "Missing sessionId" });
+        }
+        const access = await verifySessionAccess(sessionId, user);
+        if (access.ok === false) {
+          return socket.emit("error", { message: access.error });
+        }
+        // Forward to GV in session room (exclude self)
+        socket.to(`session:${sessionId}`).emit("screen:state", {
+          session_id: sessionId,
+          from: user.id,
+          state: payload.state,
+          received_at: new Date().toISOString(),
+        });
+      } catch (err: any) {
+        // Không spam log — chỉ warn
+        console.warn("[live-help socket] screen:state failed:", err.message);
+      }
+    });
+
+    // ---- screen:request-capture (GV → HS) — GV yêu cầu HS share màn hình thật ----
+    socket.on("screen:request-capture", async (payload: { sessionId?: string }) => {
+      try {
+        if (user.role !== "teacher") {
+          return socket.emit("error", {
+            message: "Only teacher requests capture",
+          });
+        }
+        const sessionId = payload?.sessionId;
+        if (!sessionId) {
+          return socket.emit("error", { message: "Missing sessionId" });
+        }
+        const access = await verifySessionAccess(sessionId, user);
+        if (access.ok === false) {
+          return socket.emit("error", { message: access.error });
+        }
+        socket.to(`session:${sessionId}`).emit("screen:request-capture", {
+          session_id: sessionId,
+          from: user.id,
+        });
+      } catch (err: any) {
+        console.error("[live-help socket] screen:request-capture failed:", err);
+        socket.emit("error", { message: err.message });
+      }
+    });
+
+    // ---- whiteboard:open (GV → HS) ----
+    socket.on("whiteboard:open", async (payload: { sessionId?: string; questionId?: string; questionIdx?: number }) => {
+      try {
+        if (user.role !== "teacher") {
+          return socket.emit("error", { message: "Only teacher opens whiteboard" });
+        }
+        const sessionId = payload?.sessionId;
+        const questionId = payload?.questionId;
+        if (!sessionId || !questionId) {
+          return socket.emit("error", {
+            message: "Missing sessionId/questionId",
+          });
+        }
+        const access = await verifySessionAccess(sessionId, user);
+        if (access.ok === false) {
+          return socket.emit("error", { message: access.error });
+        }
+        liveHelpNs.to(`session:${sessionId}`).emit("whiteboard:open", {
+          session_id: sessionId,
+          question_id: questionId,
+          question_idx: payload.questionIdx ?? null,
+          from: user.id,
+          opened_at: new Date().toISOString(),
+        });
+      } catch (err: any) {
+        console.error("[live-help socket] whiteboard:open failed:", err);
+        socket.emit("error", { message: err.message });
+      }
+    });
+
+    // ---- whiteboard:stroke (GV → HS) — client-side throttle ~50ms ----
+    socket.on("whiteboard:stroke", async (payload: { sessionId?: string; stroke?: unknown }) => {
+      try {
+        if (user.role !== "teacher") {
+          return socket.emit("error", { message: "Only teacher draws" });
+        }
+        const sessionId = payload?.sessionId;
+        if (!sessionId) {
+          return socket.emit("error", { message: "Missing sessionId" });
+        }
+        const access = await verifySessionAccess(sessionId, user);
+        if (access.ok === false) {
+          return socket.emit("error", { message: access.error });
+        }
+        socket.to(`session:${sessionId}`).emit("whiteboard:stroke", {
+          session_id: sessionId,
+          stroke: payload.stroke,
+          from: user.id,
+        });
+      } catch (err: any) {
+        // Không spam — strokes rất thường xuyên
+        // console.warn("[live-help socket] whiteboard:stroke failed:", err.message);
+      }
+    });
+
+    // ---- whiteboard:clear (GV) ----
+    socket.on("whiteboard:clear", async (payload: { sessionId?: string }) => {
+      try {
+        if (user.role !== "teacher") {
+          return socket.emit("error", { message: "Only teacher clears" });
+        }
+        const sessionId = payload?.sessionId;
+        if (!sessionId) {
+          return socket.emit("error", { message: "Missing sessionId" });
+        }
+        const access = await verifySessionAccess(sessionId, user);
+        if (access.ok === false) {
+          return socket.emit("error", { message: access.error });
+        }
+        liveHelpNs.to(`session:${sessionId}`).emit("whiteboard:clear", {
+          session_id: sessionId,
+          from: user.id,
+        });
+      } catch (err: any) {
+        console.error("[live-help socket] whiteboard:clear failed:", err);
+        socket.emit("error", { message: err.message });
+      }
+    });
+
+    // ---- whiteboard:close (GV) — broadcast close event ----
+    // Persist strokes qua REST PUT /api/live/help/whiteboard/... (client trigger).
+    socket.on("whiteboard:close", async (payload: { sessionId?: string }) => {
+      try {
+        if (user.role !== "teacher") {
+          return socket.emit("error", { message: "Only teacher closes" });
+        }
+        const sessionId = payload?.sessionId;
+        if (!sessionId) {
+          return socket.emit("error", { message: "Missing sessionId" });
+        }
+        const access = await verifySessionAccess(sessionId, user);
+        if (access.ok === false) {
+          return socket.emit("error", { message: access.error });
+        }
+        liveHelpNs.to(`session:${sessionId}`).emit("whiteboard:close", {
+          session_id: sessionId,
+          from: user.id,
+          closed_at: new Date().toISOString(),
+        });
+      } catch (err: any) {
+        console.error("[live-help socket] whiteboard:close failed:", err);
+        socket.emit("error", { message: err.message });
+      }
     });
   });
 

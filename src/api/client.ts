@@ -1264,3 +1264,142 @@ export interface TurnCredentials {
 export async function getTurnCredentials(): Promise<TurnCredentials> {
   return request("GET", "/api/live/help/turn-credentials");
 }
+
+// ============================================================
+// Step 12d — Teacher Observation Mode + Whiteboard
+// ============================================================
+
+/**
+ * Status của HS trong active-students list:
+ *   - doing_today: last engagement_event < 5 phút trước
+ *   - idle: 5-30 phút
+ *   - offline: không có event hôm nay hoặc > 30 phút
+ */
+export type ObserveStatus = "doing_today" | "idle" | "offline";
+
+export interface ActiveStudent {
+  id: string;
+  name: string;
+  username: string;
+  level: string | null;
+  cefr_level: string | null;
+  goal: string | null;
+  class_id: string;
+  class_name: string;
+  status: ObserveStatus;
+  last_activity_at: string | null;
+  last_activity_minutes_ago: number | null;
+  tasks_done_today: number;
+  minutes_today: number;
+  /** Teacher đang observe HS này (nếu có). */
+  currently_observed_by: string | null;
+  currently_observed_name: string | null;
+}
+
+export interface ActiveStudentsResponse {
+  students: ActiveStudent[];
+  count: number;
+  summary: {
+    doing_today: number;
+    idle: number;
+    offline: number;
+  };
+}
+
+/**
+ * GET /api/live/teach/active-students
+ * GV: list HS các lớp mình dạy + status + currently_observed_by.
+ * Admin: list tất cả HS.
+ */
+export async function getActiveStudents(): Promise<ActiveStudentsResponse> {
+  return request<ActiveStudentsResponse>(
+    "GET",
+    "/api/live/teach/active-students"
+  );
+}
+
+export interface StudentQuestionContext {
+  id: string;
+  template_type: string;
+  topic: string | null;
+  level: string | null;
+  content: any; // JSON parsed từ question_bank.content_json
+  submission: {
+    id: string;
+    score_pct: number | null;
+    submitted_at: string;
+  } | null;
+}
+
+export interface StudentCurrentSession {
+  has_assignment: boolean;
+  assignment?: {
+    id: string;
+    title: string;
+    class_id: string;
+    class_name: string;
+    due_at: string | null;
+    instructions: string | null;
+  };
+  questions?: StudentQuestionContext[];
+  total_questions?: number;
+}
+
+/**
+ * GET /api/live/teach/student/:id/current-session
+ * GV: current assignment context của HS + questions + submissions gần nhất.
+ */
+export async function getStudentCurrentSession(
+  studentId: string
+): Promise<StudentCurrentSession> {
+  return request<StudentCurrentSession>(
+    "GET",
+    `/api/live/teach/student/${studentId}/current-session`
+  );
+}
+
+/**
+ * Một stroke vẽ trên whiteboard.
+ * - color: hex string (vd: "#ef4444")
+ * - size: pen width 1-10
+ * - points: array [x, y] tọa độ canvas (0-1000 normalize hoặc raw px)
+ * - tool: "pen" | "eraser"
+ */
+export interface WhiteboardStroke {
+  tool: "pen" | "eraser";
+  color: string;
+  size: number;
+  points: Array<[number, number]>;
+  timestamp: number;
+}
+
+/**
+ * GET /api/live/help/whiteboard/:sessionId/:questionId
+ * Load strokes đã lưu cho (session, question).
+ * HS mở lại session có thể xem lại bài giảng của GV.
+ */
+export async function getWhiteboardStrokes(
+  sessionId: string,
+  questionId: string
+): Promise<{ strokes: WhiteboardStroke[]; count: number; updated_at?: string }> {
+  return request(
+    "GET",
+    `/api/live/help/whiteboard/${sessionId}/${questionId}`
+  );
+}
+
+/**
+ * PUT /api/live/help/whiteboard/:sessionId/:questionId
+ * GV: save (upsert) strokes. Gọi khi whiteboard:close hoặc auto-save mỗi 30s.
+ */
+export async function saveWhiteboardStrokes(
+  sessionId: string,
+  questionId: string,
+  strokes: WhiteboardStroke[]
+): Promise<{ ok: true; count: number }> {
+  return request(
+    "PUT",
+    `/api/live/help/whiteboard/${sessionId}/${questionId}`,
+    { strokes }
+  );
+}
