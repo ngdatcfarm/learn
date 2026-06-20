@@ -1,0 +1,955 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Debug Dashboard — Live Help (Step 12d)</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0; padding: 0;
+      background: #0f172a; color: #e2e8f0;
+      min-height: 100vh;
+    }
+    header {
+      background: #1e293b;
+      padding: 10px 16px;
+      border-bottom: 1px solid #334155;
+      display: flex; align-items: center; gap: 12px;
+      flex-wrap: wrap;
+    }
+    header h1 { font-size: 15px; margin: 0; color: #f1f5f9; }
+    .auth-box {
+      margin-left: auto;
+      display: flex; align-items: center; gap: 6px;
+      font-size: 12px;
+    }
+    .auth-box .who { color: #94a3b8; }
+    .auth-box .who b { color: #fbbf24; }
+
+    nav.tabs {
+      display: flex; gap: 2px;
+      background: #0f172a;
+      padding: 0 16px;
+      border-bottom: 1px solid #334155;
+      overflow-x: auto;
+    }
+    nav.tabs button {
+      background: transparent; color: #94a3b8;
+      border: 0; padding: 10px 14px;
+      font-size: 13px; cursor: pointer;
+      border-bottom: 2px solid transparent;
+      white-space: nowrap;
+    }
+    nav.tabs button:hover { color: #e2e8f0; }
+    nav.tabs button.active {
+      color: #fbbf24;
+      border-bottom-color: #fbbf24;
+    }
+
+    main { padding: 16px; }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    .card {
+      background: #1e293b;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .card h2 {
+      font-size: 13px;
+      margin: 0 0 10px;
+      color: #fbbf24;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .card .actions { margin-left: auto; display: flex; gap: 6px; }
+
+    .row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; flex-wrap: wrap; }
+    label { font-size: 11px; color: #94a3b8; min-width: 70px; }
+    input, select, textarea {
+      flex: 1; background: #0f172a; color: #e2e8f0;
+      border: 1px solid #334155; border-radius: 4px;
+      padding: 6px 8px; font-size: 12px; font-family: inherit;
+    }
+    textarea { font-family: "SF Mono", Consolas, monospace; min-height: 80px; }
+    input:focus, select:focus, textarea:focus { outline: 1px solid #3b82f6; border-color: #3b82f6; }
+
+    button {
+      background: #2563eb; color: white; border: 0;
+      padding: 6px 12px; border-radius: 4px; font-size: 12px;
+      cursor: pointer; font-weight: 500;
+    }
+    button:disabled { background: #475569; cursor: not-allowed; }
+    button:hover:not(:disabled) { filter: brightness(1.1); }
+    button.danger { background: #dc2626; }
+    button.success { background: #16a34a; }
+    button.warn { background: #f59e0b; color: #0f172a; }
+    button.ghost { background: #334155; }
+    button.sm { padding: 3px 8px; font-size: 11px; }
+
+    table {
+      width: 100%;
+      font-size: 12px;
+      border-collapse: collapse;
+    }
+    th, td {
+      padding: 6px 8px;
+      text-align: left;
+      border-bottom: 1px solid #334155;
+    }
+    th {
+      background: #0f172a;
+      color: #94a3b8;
+      font-weight: 500;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    tr:hover td { background: #0f172a; }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .badge.green { background: #14532d; color: #4ade80; }
+    .badge.yellow { background: #713f12; color: #fbbf24; }
+    .badge.gray { background: #334155; color: #94a3b8; }
+    .badge.red { background: #450a0a; color: #f87171; }
+    .badge.blue { background: #1e3a8a; color: #60a5fa; }
+    .badge.purple { background: #4c1d95; color: #c084fc; }
+
+    .log {
+      background: #020617;
+      border-radius: 4px;
+      padding: 8px;
+      font-family: "SF Mono", Consolas, monospace;
+      font-size: 11px;
+      line-height: 1.5;
+      max-height: 400px;
+      overflow: auto;
+    }
+    .log-line { white-space: pre-wrap; word-break: break-all; margin-bottom: 2px; }
+    .log-line .ts { color: #64748b; }
+    .log-line.in { color: #4ade80; }
+    .log-line.out { color: #f472b6; }
+    .log-line.err { color: #f87171; }
+    .log-line.info { color: #60a5fa; }
+
+    pre.json {
+      background: #020617;
+      color: #94a3b8;
+      padding: 10px;
+      border-radius: 4px;
+      font-family: "SF Mono", Consolas, monospace;
+      font-size: 11px;
+      max-height: 300px;
+      overflow: auto;
+      margin: 0;
+    }
+    pre.json .key { color: #fbbf24; }
+    pre.json .str { color: #4ade80; }
+    pre.json .num { color: #60a5fa; }
+    pre.json .bool { color: #f472b6; }
+    pre.json .null { color: #64748b; }
+
+    .empty {
+      padding: 20px;
+      text-align: center;
+      color: #64748b;
+      font-size: 12px;
+    }
+
+    .login-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.95);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 100;
+    }
+    .login-box {
+      background: #1e293b;
+      padding: 24px;
+      border-radius: 12px;
+      min-width: 320px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+    }
+    .login-box h2 {
+      margin: 0 0 4px;
+      color: #fbbf24;
+      font-size: 18px;
+    }
+    .login-box p {
+      margin: 0 0 16px;
+      color: #94a3b8;
+      font-size: 12px;
+    }
+    .login-box .row { margin-bottom: 10px; }
+    .login-box input { padding: 8px 10px; font-size: 14px; }
+    .login-box .err { color: #f87171; font-size: 12px; margin-top: 8px; }
+
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 800px) { .grid-2 { grid-template-columns: 1fr; } }
+
+    .student-badge-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 8px;
+    }
+    .student-badge {
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      padding: 10px;
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .student-badge .name { font-size: 13px; color: #f1f5f9; font-weight: 600; }
+    .student-badge .meta { font-size: 10px; color: #64748b; }
+    .student-badge.doing { border-color: #16a34a; }
+    .student-badge.idle { border-color: #f59e0b; }
+    .student-badge.offline { opacity: 0.5; }
+  </style>
+</head>
+<body>
+
+<!-- Login overlay -->
+<div id="login-overlay" class="login-overlay">
+  <div class="login-box">
+    <h2>🔐 Debug Dashboard</h2>
+    <p>Yêu cầu admin token. Đăng nhập để tiếp tục.</p>
+    <div class="row">
+      <label>Username</label>
+      <input id="login-username" autocomplete="username" value="admin" />
+    </div>
+    <div class="row">
+      <label>Password</label>
+      <input id="login-password" type="password" autocomplete="current-password" />
+    </div>
+    <div class="row">
+      <button onclick="doLogin()" style="flex:1; padding:8px;">Đăng nhập</button>
+    </div>
+    <div id="login-err" class="err"></div>
+  </div>
+</div>
+
+<header>
+  <h1>🛠 Live Help Debug Dashboard</h1>
+  <span style="font-size:11px; color:#64748b;">Step 12d — internal admin tooling</span>
+  <div class="auth-box">
+    <span class="who">User: <b id="who-name">—</b></span>
+    <button class="ghost sm" onclick="doLogout()">Đăng xuất</button>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button class="active" data-tab="sessions">📊 Sessions</button>
+  <button data-tab="active">👥 Active Students</button>
+  <button data-tab="whiteboards">🎨 Whiteboards</button>
+  <button data-tab="injector">⚡ Event Injector</button>
+  <button data-tab="socket">🔌 Socket Inspector</button>
+  <button data-tab="api">🛠 API Tester</button>
+</nav>
+
+<main>
+
+  <!-- TAB 1: Sessions -->
+  <div class="tab-panel active" data-panel="sessions">
+    <div class="card">
+      <h2>Live Help Sessions
+        <div class="actions">
+          <select id="ses-status" onchange="loadSessions()">
+            <option value="">all status</option>
+            <option value="pending">pending</option>
+            <option value="active">active</option>
+            <option value="ended">ended</option>
+          </select>
+          <select id="ses-trigger" onchange="loadSessions()">
+            <option value="">all triggers</option>
+            <option value="student_request">student_request</option>
+            <option value="teacher_proactive">teacher_proactive</option>
+            <option value="teacher_observe">teacher_observe</option>
+          </select>
+          <button class="sm" onclick="loadSessions()">🔄 Refresh</button>
+        </div>
+      </h2>
+      <div id="sessions-content"><div class="empty">Loading…</div></div>
+    </div>
+  </div>
+
+  <!-- TAB 2: Active Students -->
+  <div class="tab-panel" data-panel="active">
+    <div class="card">
+      <h2>Active Students (GET /api/live/teach/active-students)
+        <div class="actions">
+          <button class="sm" onclick="loadActiveStudents()">🔄 Refresh</button>
+          <label style="min-width:auto;"><input type="checkbox" id="active-auto" /> auto-refresh 5s</label>
+        </div>
+      </h2>
+      <div id="active-content"><div class="empty">Loading…</div></div>
+    </div>
+  </div>
+
+  <!-- TAB 3: Whiteboards -->
+  <div class="tab-panel" data-panel="whiteboards">
+    <div class="card">
+      <h2>Whiteboards (live_help_whiteboards)
+        <div class="actions">
+          <input id="wb-session-id" placeholder="filter by session_id (optional)" style="max-width:280px;" />
+          <button class="sm" onclick="loadWhiteboards()">🔄 Load</button>
+        </div>
+      </h2>
+      <div id="whiteboards-content"><div class="empty">Nhập session_id hoặc bấm Load để xem all</div></div>
+    </div>
+  </div>
+
+  <!-- TAB 4: Event Injector -->
+  <div class="tab-panel" data-panel="injector">
+    <div class="grid-2">
+      <div class="card">
+        <h2>⚡ Inject engagement_event</h2>
+        <div class="row">
+          <label>User ID</label>
+          <input id="inj-user-id" placeholder="user UUID" />
+        </div>
+        <div class="row">
+          <label>Event</label>
+          <select id="inj-event">
+            <option value="login">login</option>
+            <option value="page_view">page_view</option>
+            <option value="task_done">task_done</option>
+            <option value="practice_complete">practice_complete</option>
+            <option value="logout">logout</option>
+          </select>
+        </div>
+        <div class="row">
+          <label>Value</label>
+          <input id="inj-value" placeholder="numeric value (optional)" type="number" />
+        </div>
+        <div class="row">
+          <label>Min ago</label>
+          <input id="inj-min" placeholder="0 = bây giờ, 10 = 10 phút trước" type="number" value="0" />
+        </div>
+        <div class="row">
+          <button class="success" onclick="injectEvent()" style="flex:1;">💉 Inject</button>
+        </div>
+        <div id="inj-result" style="margin-top:8px;"></div>
+      </div>
+
+      <div class="card">
+        <h2>📜 Recent events
+          <div class="actions">
+            <input id="evt-user-id" placeholder="user_id" style="max-width:240px;" />
+            <button class="sm" onclick="loadEvents()">🔄</button>
+          </div>
+        </h2>
+        <div id="events-content"><div class="empty">Nhập user_id để xem</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>🎯 Force Observe (bypass lock)</h2>
+      <div class="row">
+        <label>Student</label>
+        <input id="obs-student-id" placeholder="student UUID" />
+        <label>Teacher</label>
+        <input id="obs-teacher-id" placeholder="teacher UUID (để trống = mình)" />
+        <button class="warn" onclick="forceObserve()">🎯 Create observe session</button>
+      </div>
+      <div id="obs-result" style="margin-top:8px;"></div>
+    </div>
+  </div>
+
+  <!-- TAB 5: Socket Inspector -->
+  <div class="tab-panel" data-panel="socket">
+    <div class="card">
+      <h2>🔌 Socket.IO /live-help namespace
+        <div class="actions">
+          <button id="sock-connect-btn" class="success sm" onclick="toggleSocket()">Connect</button>
+          <button class="ghost sm" onclick="clearSocketLog()">Clear log</button>
+        </div>
+      </h2>
+      <div class="row">
+        <label>Status</label>
+        <span id="sock-status" class="badge gray">Disconnected</span>
+        <label style="min-width:auto;">Socket ID:</label>
+        <code id="sock-id" style="color:#fbbf24; font-size:11px;">—</code>
+      </div>
+      <div class="row">
+        <label>Emit</label>
+        <input id="sock-event" placeholder="event name" style="max-width:200px;" />
+        <input id="sock-payload" placeholder='{"key":"value"}' />
+        <button class="sm" onclick="emitSocketEvent()">📤 Emit</button>
+      </div>
+      <div id="sock-log" class="log"><div class="log-line info">Click Connect để bắt đầu</div></div>
+    </div>
+  </div>
+
+  <!-- TAB 6: API Tester -->
+  <div class="tab-panel" data-panel="api">
+    <div class="card">
+      <h2>🛠 API Tester (free-form request)</h2>
+      <div class="row">
+        <select id="api-method" style="max-width:90px; flex:0;">
+          <option>GET</option>
+          <option>POST</option>
+          <option>PUT</option>
+          <option>PATCH</option>
+          <option>DELETE</option>
+        </select>
+        <input id="api-url" placeholder="/api/live/teach/active-students" />
+        <button class="success" onclick="sendApiRequest()">Send</button>
+      </div>
+      <div class="row">
+        <label>Body</label>
+        <textarea id="api-body" placeholder='{"key":"value"}  (JSON, để trống nếu GET)'></textarea>
+      </div>
+      <div class="row" style="margin-top:6px;">
+        <label>Presets</label>
+        <button class="ghost sm" onclick="presetApi('GET','/api/live/teach/active-students')">active-students</button>
+        <button class="ghost sm" onclick="presetApi('GET','/api/live/help/queue')">help/queue</button>
+        <button class="ghost sm" onclick="presetApi('GET','/api/live/help/mine')">help/mine</button>
+        <button class="ghost sm" onclick="presetApi('GET','/api/debug/live-help/sessions')">debug/sessions</button>
+        <button class="ghost sm" onclick="presetApi('GET','/api/dashboard/teacher')">dashboard/teacher</button>
+      </div>
+      <h2 style="margin-top:16px;">Response
+        <span id="api-status" class="badge gray" style="margin-left:8px;">—</span>
+        <span id="api-time" style="font-size:11px; color:#64748b; margin-left:6px;"></span>
+      </h2>
+      <pre id="api-response" class="json">Chưa có request nào</pre>
+    </div>
+  </div>
+
+</main>
+
+<script>
+// ============================================================
+// Auth
+// ============================================================
+const TOKEN_KEY = "apex_auth_token";
+const USER_KEY = "apex_auth_user";
+const SOCK_LOG_MAX = 500; // cap DOM growth on chatty sockets
+const AUTO_REFRESH_MS = 5000;
+
+/** Safe JSON.stringify — handles circular refs / unserializable values. */
+function safeStringify(v) {
+  try { return JSON.stringify(v); }
+  catch { return "[unserializable]"; }
+}
+
+function getToken() { return localStorage.getItem(TOKEN_KEY) || ""; }
+function getUser() {
+  try { return JSON.parse(localStorage.getItem(USER_KEY) || "null"); }
+  catch { return null; }
+}
+function setAuth(token, user) {
+  localStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(USER_KEY, JSON.stringify(user));
+}
+function clearAuth() {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
+}
+
+async function api(method, url, body) {
+  const opts = {
+    method,
+    headers: { "Authorization": "Bearer " + getToken() },
+  };
+  if (body !== undefined) {
+    opts.headers["Content-Type"] = "application/json";
+    opts.body = typeof body === "string" ? body : JSON.stringify(body);
+  }
+  const t0 = performance.now();
+  const res = await fetch(url, opts);
+  const ms = Math.round(performance.now() - t0);
+  const text = await res.text();
+  let json = null;
+  try { json = JSON.parse(text); } catch {}
+  return { ok: res.ok, status: res.status, json, text, ms };
+}
+
+async function doLogin() {
+  const username = document.getElementById("login-username").value.trim();
+  const password = document.getElementById("login-password").value;
+  const errEl = document.getElementById("login-err");
+  errEl.textContent = "";
+  if (!username || !password) {
+    errEl.textContent = "Nhập đủ username + password";
+    return;
+  }
+  try {
+    const res = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      errEl.textContent = data.error || "Login failed";
+      return;
+    }
+    if (data.user?.role !== "admin") {
+      errEl.textContent = "Chỉ admin mới truy cập được. Role hiện tại: " + data.user?.role;
+      return;
+    }
+    setAuth(data.token, data.user);
+    onAuthReady();
+  } catch (e) {
+    errEl.textContent = "Lỗi mạng: " + e.message;
+  }
+}
+
+function doLogout() {
+  api("POST", "/api/auth/logout").finally(() => {
+    clearAuth();
+    location.reload();
+  });
+}
+
+function onAuthReady() {
+  const user = getUser();
+  document.getElementById("who-name").textContent =
+    user ? `${user.name} (${user.role})` : "—";
+  document.getElementById("login-overlay").style.display = "none";
+  // Initial loads
+  loadSessions();
+  loadActiveStudents();
+}
+
+async function bootstrap() {
+  const cached = getUser();
+  // Fast path: cached admin user + token → render immediately, skip /me roundtrip
+  if (getToken() && cached?.role === "admin") {
+    onAuthReady();
+    return;
+  }
+  if (!getToken()) return; // show login
+  // Verify token
+  const res = await api("GET", "/api/auth/me");
+  if (!res.ok || res.json?.user?.role !== "admin") {
+    clearAuth();
+    return;
+  }
+  setAuth(getToken(), res.json.user);
+  onAuthReady();
+}
+
+// ============================================================
+// Tab switching
+// ============================================================
+document.querySelectorAll("nav.tabs button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("nav.tabs button").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+    btn.classList.add("active");
+    document.querySelector(`.tab-panel[data-panel="${btn.dataset.tab}"]`).classList.add("active");
+  });
+});
+
+// ============================================================
+// JSON pretty printer
+// ============================================================
+function syntaxHighlight(obj) {
+  if (obj === null) return '<span class="null">null</span>';
+  let json = JSON.stringify(obj, null, 2);
+  json = json.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return json.replace(
+    /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
+    (m) => {
+      let cls = "num";
+      if (/^"/.test(m)) cls = /:$/.test(m) ? "key" : "str";
+      else if (/true|false/.test(m)) cls = "bool";
+      else if (/null/.test(m)) cls = "null";
+      return '<span class="' + cls + '">' + m + '</span>';
+    }
+  );
+}
+
+function esc(s) {
+  return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// ============================================================
+// Tab 1: Sessions
+// ============================================================
+async function loadSessions() {
+  const status = document.getElementById("ses-status").value;
+  const trigger = document.getElementById("ses-trigger").value;
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  if (trigger) params.set("trigger", trigger);
+  params.set("limit", "50");
+  const url = "/api/debug/live-help/sessions?" + params.toString();
+  const target = document.getElementById("sessions-content");
+  target.innerHTML = '<div class="empty">Loading…</div>';
+  const res = await api("GET", url);
+  if (!res.ok) {
+    target.innerHTML = `<div class="empty" style="color:#f87171;">Error ${res.status}: ${esc(res.json?.error || res.text)}</div>`;
+    return;
+  }
+  const rows = res.json?.sessions || [];
+  if (!rows.length) {
+    target.innerHTML = '<div class="empty">Không có session nào</div>';
+    return;
+  }
+  const statusBadge = (s) => {
+    const map = { pending: "yellow", active: "green", ended: "gray" };
+    return `<span class="badge ${map[s] || "gray"}">${s}</span>`;
+  };
+  const triggerBadge = (t) => {
+    const map = { student_request: "blue", teacher_proactive: "purple", teacher_observe: "yellow" };
+    return `<span class="badge ${map[t] || "gray"}">${t}</span>`;
+  };
+  target.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th><th>Status</th><th>Trigger</th><th>Level</th>
+          <th>Student</th><th>Teacher</th><th>Started</th><th>Ended</th><th>Outcome</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map(r => `
+          <tr>
+            <td><code style="font-size:10px;">${esc(r.id.slice(0, 8))}</code></td>
+            <td>${statusBadge(r.status)}</td>
+            <td>${triggerBadge(r.trigger)}</td>
+            <td>${esc(r.level)}</td>
+            <td>${esc(r.student_name)} <span style="color:#64748b;font-size:10px;">@${esc(r.student_username || "")}</span></td>
+            <td>${esc(r.teacher_name || "—")}</td>
+            <td style="font-size:10px;">${esc(r.started_at)}</td>
+            <td style="font-size:10px;">${esc(r.ended_at || "—")}</td>
+            <td>${esc(r.outcome || "—")}</td>
+            <td>${r.status !== "ended"
+              ? `<button class="danger sm" onclick="endSession('${r.id}')">End</button>`
+              : ""}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+async function endSession(id) {
+  if (!confirm("Force end session " + id.slice(0, 8) + "?")) return;
+  const res = await api("POST", `/api/debug/live-help/sessions/${id}/end`);
+  alert(res.ok ? "✅ Ended" : "❌ " + (res.json?.error || res.text));
+  loadSessions();
+}
+
+// ============================================================
+// Tab 2: Active Students
+// ============================================================
+let activeTimer = null;
+async function loadActiveStudents() {
+  const target = document.getElementById("active-content");
+  const res = await api("GET", "/api/live/teach/active-students");
+  if (!res.ok) {
+    target.innerHTML = `<div class="empty" style="color:#f87171;">Error ${res.status}: ${esc(res.json?.error || res.text)}</div>`;
+    return;
+  }
+  const list = res.json?.students || [];
+  if (!list.length) {
+    target.innerHTML = '<div class="empty">Không có HS nào</div>';
+    return;
+  }
+  target.innerHTML = `
+    <div style="font-size:11px; color:#64748b; margin-bottom:8px;">
+      ${list.length} HS · refresh: ${new Date().toLocaleTimeString()}
+    </div>
+    <div class="student-badge-grid">
+      ${list.map(s => `
+        <div class="student-badge ${s.status}">
+          <div class="name">${esc(s.name)}</div>
+          <div class="meta">
+            <span class="badge ${s.status === "doing_today" ? "green" : s.status === "idle" ? "yellow" : "gray"}">${s.status}</span>
+            ${s.currently_observed_by ? `<span class="badge purple" title="${esc(s.currently_observed_by)}">👁 observed</span>` : ""}
+            ${s.has_active_help ? `<span class="badge blue">help</span>` : ""}
+          </div>
+          <div class="meta">last: ${esc(s.last_seen_at || "—")}</div>
+          <div class="meta"><code style="font-size:9px;">${esc(s.id.slice(0, 8))}</code></div>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+document.getElementById("active-auto").addEventListener("change", (e) => {
+  if (activeTimer) { clearInterval(activeTimer); activeTimer = null; }
+  if (e.target.checked) activeTimer = setInterval(loadActiveStudents, AUTO_REFRESH_MS);
+});
+
+// ============================================================
+// Tab 3: Whiteboards
+// ============================================================
+async function loadWhiteboards() {
+  const sid = document.getElementById("wb-session-id").value.trim();
+  const params = new URLSearchParams();
+  if (sid) params.set("session_id", sid);
+  params.set("limit", "50");
+  const url = "/api/debug/live-help/whiteboards?" + params.toString();
+  const target = document.getElementById("whiteboards-content");
+  target.innerHTML = '<div class="empty">Loading…</div>';
+  const res = await api("GET", url);
+  if (!res.ok) {
+    target.innerHTML = `<div class="empty" style="color:#f87171;">Error ${res.status}: ${esc(res.json?.error || res.text)}</div>`;
+    return;
+  }
+  const rows = res.json?.whiteboards || [];
+  if (!rows.length) {
+    target.innerHTML = '<div class="empty">Không có whiteboard</div>';
+    return;
+  }
+  target.innerHTML = `
+    <table>
+      <thead><tr><th>ID</th><th>Session</th><th>Question</th><th>Strokes</th><th>Updated</th><th>Author</th></tr></thead>
+      <tbody>
+        ${rows.map(r => `
+          <tr>
+            <td><code style="font-size:10px;">${esc(r.id?.slice?.(0, 8) || "—")}</code></td>
+            <td><code style="font-size:10px;">${esc(r.session_id?.slice?.(0, 8) || "—")}</code></td>
+            <td>${esc(r.question_id || "—")}</td>
+            <td>${r.stroke_count ?? "?"} strokes (${r.bytes ?? "?"} B)</td>
+            <td style="font-size:10px;">${esc(r.updated_at)}</td>
+            <td>${esc(r.last_author_name || "—")}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+// ============================================================
+// Tab 4: Event Injector + Observe
+// ============================================================
+async function injectEvent() {
+  const user_id = document.getElementById("inj-user-id").value.trim();
+  const event = document.getElementById("inj-event").value;
+  const value = document.getElementById("inj-value").value;
+  const minutes_ago = parseInt(document.getElementById("inj-min").value || "0", 10);
+  const target = document.getElementById("inj-result");
+  if (!user_id) { target.innerHTML = '<span style="color:#f87171;">Nhập user_id</span>'; return; }
+  const body = { user_id, event, minutes_ago };
+  if (value) body.value = Number(value);
+  const res = await api("POST", "/api/debug/engagement/inject", body);
+  if (res.ok) {
+    target.innerHTML = `<span style="color:#4ade80;">✅ Injected event_id=${esc(res.json?.event_id || "?")} at ${esc(res.json?.occurred_at || "?")}</span>`;
+    loadEvents();
+  } else {
+    target.innerHTML = `<span style="color:#f87171;">❌ ${esc(res.json?.error || res.text)}</span>`;
+  }
+}
+
+async function loadEvents() {
+  const user_id = document.getElementById("evt-user-id").value.trim()
+                  || document.getElementById("inj-user-id").value.trim();
+  if (!user_id) return;
+  document.getElementById("evt-user-id").value = user_id;
+  const target = document.getElementById("events-content");
+  target.innerHTML = '<div class="empty">Loading…</div>';
+  const res = await api("GET", `/api/debug/engagement/events?user_id=${encodeURIComponent(user_id)}&limit=20`);
+  if (!res.ok) {
+    target.innerHTML = `<div class="empty" style="color:#f87171;">${esc(res.json?.error || res.text)}</div>`;
+    return;
+  }
+  const rows = res.json?.events || [];
+  if (!rows.length) { target.innerHTML = '<div class="empty">Không có event nào</div>'; return; }
+  target.innerHTML = `
+    <table>
+      <thead><tr><th>Event</th><th>Value</th><th>Occurred</th></tr></thead>
+      <tbody>
+        ${rows.map(r => `
+          <tr>
+            <td>${esc(r.event)}</td>
+            <td>${esc(r.value ?? "—")}</td>
+            <td style="font-size:10px;">${esc(r.occurred_at)}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+async function forceObserve() {
+  const student_id = document.getElementById("obs-student-id").value.trim();
+  const teacher_id = document.getElementById("obs-teacher-id").value.trim();
+  const target = document.getElementById("obs-result");
+  if (!student_id) { target.innerHTML = '<span style="color:#f87171;">Nhập student_id</span>'; return; }
+  const body = { student_id };
+  if (teacher_id) body.teacher_id = teacher_id;
+  const res = await api("POST", "/api/debug/observe/force-create", body);
+  if (res.ok) {
+    target.innerHTML = `<span style="color:#4ade80;">✅ Created session ${esc(res.json?.session_id || "?")}</span>`;
+    // Refresh sessions tab if visible
+    loadActiveStudents();
+  } else {
+    target.innerHTML = `<span style="color:#f87171;">❌ ${esc(res.json?.error || res.text)}</span>`;
+  }
+}
+
+// ============================================================
+// Tab 5: Socket Inspector
+// ============================================================
+let socket = null;
+
+function loadSocketIOClient() {
+  return new Promise((resolve, reject) => {
+    if (window.io) return resolve();
+    const s = document.createElement("script");
+    s.src = "/socket.io/socket.io.js";
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error("Không load được socket.io client"));
+    document.head.appendChild(s);
+  });
+}
+
+async function toggleSocket() {
+  if (socket && socket.connected) {
+    socket.disconnect();
+    return;
+  }
+  try {
+    await loadSocketIOClient();
+  } catch (e) {
+    sockLog("err", "❌ " + e.message);
+    return;
+  }
+  socket = window.io("/live-help", {
+    auth: { token: getToken() },
+    transports: ["websocket", "polling"],
+  });
+
+  socket.on("connect", () => {
+    document.getElementById("sock-status").className = "badge green";
+    document.getElementById("sock-status").textContent = "Connected";
+    document.getElementById("sock-id").textContent = socket.id;
+    document.getElementById("sock-connect-btn").textContent = "Disconnect";
+    document.getElementById("sock-connect-btn").className = "danger sm";
+    sockLog("info", "🟢 Connected as " + socket.id);
+  });
+
+  socket.on("disconnect", (reason) => {
+    document.getElementById("sock-status").className = "badge red";
+    document.getElementById("sock-status").textContent = "Disconnected";
+    document.getElementById("sock-id").textContent = "—";
+    document.getElementById("sock-connect-btn").textContent = "Connect";
+    document.getElementById("sock-connect-btn").className = "success sm";
+    sockLog("err", "🔴 Disconnected: " + reason);
+  });
+
+  socket.on("connect_error", (err) => {
+    sockLog("err", "❌ connect_error: " + err.message);
+  });
+
+  // Catch-all
+  socket.onAny((event, ...args) => {
+    sockLog("in", `← ${event} ${safeStringify(args)}`);
+  });
+}
+
+function emitSocketEvent() {
+  if (!socket || !socket.connected) {
+    sockLog("err", "Socket chưa connect");
+    return;
+  }
+  const event = document.getElementById("sock-event").value.trim();
+  const payloadRaw = document.getElementById("sock-payload").value.trim();
+  if (!event) return;
+  let payload = null;
+  if (payloadRaw) {
+    try { payload = JSON.parse(payloadRaw); }
+    catch (e) { sockLog("err", "Payload không phải JSON: " + e.message); return; }
+  }
+  socket.emit(event, payload);
+  sockLog("out", `→ ${event} ${safeStringify(payload)}`);
+}
+
+function sockLog(cls, msg) {
+  const log = document.getElementById("sock-log");
+  const line = document.createElement("div");
+  line.className = "log-line " + cls;
+  const ts = new Date().toLocaleTimeString();
+  line.innerHTML = `<span class="ts">[${ts}]</span> ${esc(msg)}`;
+  log.appendChild(line);
+  // Cap DOM size — drop oldest when exceeded
+  while (log.children.length > SOCK_LOG_MAX) {
+    log.removeChild(log.firstChild);
+  }
+  log.scrollTop = log.scrollHeight;
+}
+
+function clearSocketLog() {
+  document.getElementById("sock-log").innerHTML = '<div class="log-line info">Cleared</div>';
+}
+
+// ============================================================
+// Tab 6: API Tester
+// ============================================================
+function presetApi(method, url) {
+  document.getElementById("api-method").value = method;
+  document.getElementById("api-url").value = url;
+  if (method === "GET" || method === "DELETE") {
+    document.getElementById("api-body").value = "";
+  }
+}
+
+async function sendApiRequest() {
+  const method = document.getElementById("api-method").value;
+  const url = document.getElementById("api-url").value.trim();
+  const bodyRaw = document.getElementById("api-body").value.trim();
+  if (!url) return;
+  const statusEl = document.getElementById("api-status");
+  const timeEl = document.getElementById("api-time");
+  const respEl = document.getElementById("api-response");
+  statusEl.className = "badge yellow";
+  statusEl.textContent = "Loading…";
+  timeEl.textContent = "";
+  respEl.innerHTML = "Loading…";
+
+  let body;
+  if (bodyRaw) {
+    try { body = JSON.parse(bodyRaw); }
+    catch (e) {
+      statusEl.className = "badge red";
+      statusEl.textContent = "Bad JSON";
+      respEl.textContent = "Body không phải JSON: " + e.message;
+      return;
+    }
+  }
+  try {
+    const res = await api(method, url, body);
+    statusEl.className = "badge " + (res.ok ? "green" : "red");
+    statusEl.textContent = res.status + (res.ok ? " OK" : " ERR");
+    timeEl.textContent = res.ms + " ms";
+    if (res.json !== null) {
+      respEl.innerHTML = syntaxHighlight(res.json);
+    } else {
+      respEl.textContent = res.text || "(empty)";
+    }
+  } catch (e) {
+    statusEl.className = "badge red";
+    statusEl.textContent = "Network err";
+    respEl.textContent = e.message;
+  }
+}
+
+// ============================================================
+// Cleanup on tab close — disconnect socket + clear timers to avoid leaks
+// ============================================================
+window.addEventListener("pagehide", () => {
+  if (activeTimer) { clearInterval(activeTimer); activeTimer = null; }
+  if (socket) { try { socket.disconnect(); } catch {} socket = null; }
+});
+
+// ============================================================
+// Bootstrap
+// ============================================================
+bootstrap();
+</script>
+</body>
+</html>

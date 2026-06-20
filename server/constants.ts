@@ -45,3 +45,39 @@ export const MAX_CSV_BYTES = 5 * 1024 * 1024;
 
 /** Chunk size cho bulk INSERT — 500 rows ≈ 125 KB, an toàn dưới max_allowed_packet. */
 export const BULK_INSERT_CHUNK = 500;
+
+// ============================================================
+// Live Help & engagement enums (Step 12 — shared bởi liveHelp, engagement, debug)
+// ============================================================
+
+/** Status của `live_help_sessions` (xem `db/schema.sql`). */
+export const LIVE_HELP_STATUSES = ["pending", "active", "ended"] as const;
+export type LiveHelpStatus = (typeof LIVE_HELP_STATUSES)[number];
+
+/** Trigger nguồn cho `live_help_sessions.trigger`. `teacher_observe` (Step 12d) bypass lock. */
+export const LIVE_HELP_TRIGGERS = [
+  "student_request",
+  "teacher_proactive",
+  "teacher_observe",
+] as const;
+export type LiveHelpTrigger = (typeof LIVE_HELP_TRIGGERS)[number];
+
+/**
+ * Engagement event types (`engagement_events.event`).
+ * Union của public track endpoint (engagement.ts) + debug injector (debug.ts).
+ * Khi thêm event mới, cả 2 router auto pick up.
+ */
+export const VALID_ENGAGEMENT_EVENTS = [
+  "session_start",
+  "session_end",
+  "task_done",
+  "task_started",
+  "task_abandoned",
+  "hint_used",
+  "error_occurred",
+  "help_request",
+  "highlight_used",
+  "voice_call_started",
+  "voice_call_ended",
+] as const;
+export type EngagementEvent = (typeof VALID_ENGAGEMENT_EVENTS)[number];

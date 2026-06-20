@@ -37,6 +37,7 @@ import { practiceRouter } from "./server/practice";
 import { flashcardsRouter } from "./server/flashcards";
 import { liveHelpRouter } from "./server/liveHelp";
 import { teachRouter } from "./server/teach";
+import { debugRouter } from "./server/debug";
 import { initSocketIO } from "./server/socket";
 import { initLiveHelpSocket } from "./server/liveHelpSocket";
 import { registerJob, startCronJobs } from "./server/cron";
@@ -126,6 +127,7 @@ app.use("/api/practice", practiceRouter(ai));
 app.use("/api/flashcards", flashcardsRouter());
 app.use("/api/live/help", liveHelpRouter);
 app.use("/api/live/teach", teachRouter);
+app.use("/api/debug", debugRouter); // Step 12d debug dashboard (admin only)
 
 // Static serve for uploaded audio files (Step 9a). Mount BEFORE Vite so dev also works.
 app.use(
