@@ -1,6 +1,6 @@
 # Roadmap & Tiến độ dự án `thaoenglish/learn`
 
-> Cập nhật lần cuối: 2026-06-19 (Step 12c — Live Help Voice + Screen share)
+> Cập nhật lần cuối: 2026-06-20 (Step 12d Phase 1+2 — GV-driven Observe foundation)
 > Mục đích: Theo dõi các Step đã chốt, đang làm, và sắp tới — để mỗi lần quay lại trao đổi đều biết kế hoạch tới đâu.
 
 ---
@@ -39,6 +39,10 @@
 | **10g** | **PH multi-class view (Step 10h)** | ✅ **Done 2026-06-19** | Commit `fccb743` — `GET /api/dashboard/parent/classes` (JOIN classes+class_members+parent_links, group by class, aggregate stats: tasks_done/minutes/active_children). Frontend `ClassesSection` mới giữa "Tổng quan" và "Cài đặt", 3 KPI cards + per-class children list với needs_help alert. |
 | **10i** | **Lịch sử PH↔HS link (soft-delete + restore)** | ✅ **Done 2026-06-19** | Commit `1e9a30f` — Migration 008 (`deleted_at` + `deleted_by` FK→users + index). DELETE → UPDATE soft-delete. Mới: `GET /api/admin/parent-links/history` + `POST /api/admin/parent-links/:p/:s/restore`. EditUserModal có tab "📜 Lịch sử" thứ 3, restore 1-click với confirm. |
 | **12a** | **Live Help T3 — Cấp 1 (Text hint) + Foundation** | ✅ **Done 2026-06-19** | Commit `6e1e796` — 3-commit plan (Text → Highlight → Voice). Migration 009 tạo 3 table (sessions/hints/highlights; highlights anticipate Slice B). 7 endpoint REST (request/teacher-proactive/hint/end/queue/mine/messages) + auto-assign teacher (lớp HS cũ nhất) + Inbox fallback. FE: floating "🆘" cho HS + HelpRequestModal + LiveHelpModal (HS chat) + TeacherLiveHelpPane (slide-in right) + useLiveHelp hook với 3s polling. Slice B (Socket.io + Highlight) + Slice C (WebRTC Voice) sẽ dùng lại schema + hooks. PH không có role. |
+| **12b** | **Live Help Cấp 3 — Highlight overlay (Socket.IO realtime)** | ✅ **Done 2026-06-19** | xem `step12b-live-help-highlight.md` |
+| **12c** | **Live Help Cấp 2 — Voice call + Screen share (WebRTC P2P + TURN)** | ✅ **Done 2026-06-19** | xem `step12c-live-help-voice-screenshare.md` |
+| **12d P1** | **Observe foundation — backend (REST + socket + schema)** | ✅ **Done 2026-06-20** | Commit `774a69b` + `5cee430` + `c194eae`. **Pivot từ HS-driven → GV-driven classroom mode** (xem bên dưới). Migration 010: extend `live_help_sessions.trigger` enum ('teacher_observe') + `live_help_whiteboards` table (UNIQUE session×question, ON DUPLICATE KEY UPDATE). REST: `GET /api/live/teach/active-students` (status doing_today/idle/offline derived từ engagement_events), `GET /api/live/teach/student/:id/current-session` (assignment+questions+submissions), `GET/PUT /api/live/help/whiteboard/:sessionId/:questionId` (GV save, HS review). Socket handlers `/live-help` namespace: `observe:start/:accept/:reject/:end` (1 HS / 1 observe lock), `screen:state/:request-capture`, `whiteboard:open/:stroke/:clear/:close`. User-rooms (`user:${userId}`) cho targeted emits. |
+| **12d P2** | **Teacher Dashboard "Lớp đang học" section** | ✅ **Done 2026-06-20** | Commit `1c0be82`. Polling `/active-students` mỗi 10s. Status badges (doing_today/idle/offline), last activity, tasks/min today, `currently_observed_by` badge (disable click nếu GV khác đang xem). LIVE pulse animation. Sort: doing_today → idle → offline. Click row → stub alert. Phase 3 sẽ wire tới `/observe/:studentId`. |
 
 ---
 
@@ -98,6 +102,57 @@ fd56b29 feat: admin can manage parent-student links via EditUserModal
 - ~~Multi-class cho PH~~ → done 2026-06-19 (commit `fccb743` — Step 10h)
 - ~~Auto-suggest PH/HS theo tên con~~ → done 2026-06-19 (commit `d1c3e6a`)
 - ~~Relationship options dropdown cố định (mother/father/...) — giữ free-text~~ → done 2026-06-19 (commit `60067d6`, giờ dùng fixed vocab)
+
+---
+
+## Step 12d — GV-driven Classroom Observe Mode (PIVOT)
+
+### Bối cảnh — pivot paradigm
+Sau Step 12a/b/c (Live Help theo mô hình HS-driven — HS bấm "Cần hỗ trợ" → GV accept → text/voice/highlight), user nhận ra mô hình này **không phù hợp với T3 — Flipped Classroom**:
+
+1. T3 là HS **đang làm bài** trong lớp. Nếu phải bấm "Cần hỗ trợ" → GV mới vào → HS đã mất 30s-1ph tập trung.
+2. Voice call **auto-connect** giữa GV ↔ HS khi GV vào quan sát mới là điều kiện cần để **giảng bài** qua voice real-time.
+3. Whiteboard chỉ hữu ích nếu GV **vẽ lên bài tập của HS** (background = câu hỏi HS đang làm) chứ không phải canvas trắng.
+
+→ **Quyết định**: Pivot sang **GV-driven Classroom Mode**. GV dashboard list HS đang làm bài → click vào bất kỳ HS nào → voice auto-connect + view màn hình HS + whiteboard background = câu hỏi HS đang làm.
+
+### Quyết định đã chốt (Q&A với user)
+- **Screen view**: Hybrid — JSON state (current question, score) mặc định + screen capture opt-in (GV bấm "Xin quay màn hình" → HS confirm).
+- **Voice**: 2-way, cả 2 bên mute được.
+- **Whiteboard persistence**: Save per session, HS mở lại session có thể review bài giảng.
+- **Multi-observe**: 1 HS / 1 observe tại 1 thời điểm (lock ở `observe:start` handler).
+
+### Các phase
+| Phase | Scope | Status |
+|---|---|---|
+| **P1 Backend** | Migration 010 + 2 REST endpoints (active-students + current-session) + 2 whiteboard endpoints + 10 socket handlers (observe:start/accept/reject/end, screen:state/request-capture, whiteboard:open/stroke/clear/close) + user-rooms | ✅ Done 2026-06-20 |
+| **P2 Teacher Dashboard** | `LiveStudentsSection` hiển thị HS các lớp GV dạy + status + click handler stub | ✅ Done 2026-06-20 |
+| **P3 Observe Mode (GV)** | Route `/observe/:studentId` + component với voice auto-connect + HS screen state panel + question picker → mở whiteboard | 🔜 Tiếp theo |
+| **P4 HS Observer Overlay** | HS nhận `observe:incoming` → confirm/reject → mini overlay hiển thị "GV đang xem" + voice active | 🔜 |
+| **P5 Whiteboard component** | Canvas (touch + mouse) + tools (pen/eraser/colors/size) + sync realtime qua `whiteboard:stroke` + autosave 30s + close sync | 🔜 |
+| **P6 Voice auto-connect** | Modify `useVoiceCall` để auto-accept khi `observe:accept` từ HS + auto-cleanup khi observe:end | 🔜 |
+| **P7 E2E testing + roadmap** | Test full flow 2 thiết bị (1 GV + 1 HS) → update roadmap | 🔜 |
+
+### Kiến trúc kỹ thuật
+- **Schema** (`db/migrations/010_live_help_observe.sql`):
+  - `ALTER live_help_sessions MODIFY trigger ENUM(...,'teacher_observe')`
+  - `live_help_whiteboards` table (id, session_id, question_id, teacher_id, strokes_json LONGTEXT, timestamps). UNIQUE KEY `(session_id, question_id)` → upsert đơn giản với `INSERT ... ON DUPLICATE KEY UPDATE`.
+- **REST**:
+  - `GET /api/live/teach/active-students` (teacher/admin) — JOIN class_members + engagement_events + LEFT JOIN live_help_sessions (currently_observed_by). Status derived: <5p doing_today / 5-30p idle / >30p offline.
+  - `GET /api/live/teach/student/:id/current-session` (teacher/admin) — verify HS thuộc lớp GV (admin bypass) → assignment mới nhất + questions (limit 20) + submissions mới nhất.
+  - `GET/PUT /api/live/help/whiteboard/:sessionId/:questionId` — moved từ teachRouter (mount `/api/live/teach`) → liveHelpRouter (mount `/api/live/help`) cho nhất quán với hint/highlight. Commit fix `5cee430`.
+- **Socket** (`server/liveHelpSocket.ts`):
+  - User-rooms `user:${userId}` join on connection → targeted emits (`socket.to(\`user:${studentId}\`).emit(...)`).
+  - `observe:start` (GV) — check lock (existing active teacher_observe session cho student) → INSERT session row → emit `observe:incoming` tới student user-room.
+  - `observe:accept` (HS) — join session room → broadcast `observe:ready` → GV initiate voice offer (P6 wires useVoiceCall).
+  - `observe:reject` (HS) — UPDATE session outcome='gave_up' → emit `observe:ended`.
+  - `observe:end` (either) — UPDATE ended_at + outcome → emit `observe:ended` + cleanup.
+  - `screen:state` (HS→GV) — JSON {current_question_id, score_pct, last_action} every ~2s.
+  - `screen:request-capture` (GV→HS) — emit, HS confirm qua `getDisplayMedia`.
+  - `whiteboard:open/:stroke/:clear/:close` (GV→HS room) — realtime canvas sync. Persist via REST PUT on close.
+- **Audit** (PII-safe):
+  - `teach.observe.start` / `teach.observe.end` (details: session_id, student_id, outcome, duration_sec)
+  - `teach.whiteboard.save` (details: question_id, stroke_count)
 
 ---
 
