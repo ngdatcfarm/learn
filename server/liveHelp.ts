@@ -43,6 +43,7 @@ import { requireRole, AuthUser } from "./auth";
 import { logAudit } from "./audit";
 import { sendDirectMessage } from "./messaging";
 import { emitToRoom } from "./socket";
+import { generateTurnCredentials } from "./turn";
 
 export const liveHelpRouter = Router();
 
@@ -170,40 +171,23 @@ async function listWithNames(sessions: SessionRow[]): Promise<SessionWithNamesRo
  * Trả time-limited TURN credentials cho WebRTC ICE servers.
  * Auth: bất kỳ user đăng nhập (student/teacher/admin/parent).
  *
- * Scheme (RFC 7635 / coturn `use-auth-secret`):
- *   - username = `${unixExp}:${userId}`
- *   - credential = base64(HMAC-SHA1(TURN_SECRET, username))
- *   - TTL: 24h (client re-fetch khi hết hạn)
+ * Provider điều khiển qua env `TURN_PROVIDER` (mặc định "twilio").
+ * Xem `server/turn.ts` để biết chi tiết từng scheme.
  *
- * Nếu TURN_SECRET chưa cấu hình → trả 503 (vẫn dùng STUN-only được).
+ * Nếu provider chưa cấu hình → trả 503 (vẫn dùng STUN-only được).
  */
 liveHelpRouter.get("/turn-credentials", async (req: Request, res: Response) => {
   const user = await requireRole(req, res, ["student", "teacher", "admin", "parent"]);
   if (!user) return;
 
-  const secret = process.env.TURN_SECRET;
-  const host = process.env.TURN_HOST;
-  if (!secret || !host) {
-    return res.status(503).json({
-      error: "TURN server chưa được cấu hình trên server (TURN_SECRET/TURN_HOST).",
+  try {
+    const creds = generateTurnCredentials(user.id);
+    res.json(creds);
+  } catch (e: any) {
+    res.status(503).json({
+      error: e?.message || "TURN credentials chưa sẵn sàng.",
     });
   }
-
-  const ttlSeconds = 24 * 3600;
-  const exp = Math.floor(Date.now() / 1000) + ttlSeconds;
-  const username = `${exp}:${user.id}`;
-  const credential = crypto
-    .createHmac("sha1", secret)
-    .update(username)
-    .digest("base64");
-
-  const urls = [
-    `turn:${host}:3478?transport=udp`,
-    `turn:${host}:3478?transport=tcp`,
-    `turns:${host}:5349?transport=tcp`,
-  ];
-
-  res.json({ urls, username, credential, ttl: ttlSeconds });
 });
 
 // ============================================================
