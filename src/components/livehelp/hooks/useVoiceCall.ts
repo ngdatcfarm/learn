@@ -389,7 +389,10 @@ export function useVoiceCall({
 
     const onIce = (payload: { sessionId: string; candidate: any; from: string }) => {
       if (payload.sessionId !== sessionId) return;
-      const c = payload.candidate?.candidate || "";
+      // payload.candidate = simple-peer signal data: {type:'candidate', candidate: {candidate:'...', sdpMLineIndex, sdpMid}}
+      // payload.candidate.candidate = inner candidate init object
+      // payload.candidate.candidate.candidate = actual ICE candidate string
+      const c = payload.candidate?.candidate?.candidate || "";
       console.log(`[useVoiceCall] ← call:ice (${c.slice(0, 40)}...)`);
       if (peerRef.current) {
         try { peerRef.current.signal(payload.candidate); } catch (e) {

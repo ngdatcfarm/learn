@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <title>WebRTC Minimal Test — standalone simple-peer</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      margin: 0; padding: 12px;
+      background: #0f172a; color: #e2e8f0;
+      min-height: 100vh;
+      font-size: 13px;
+    }
+    h1 { font-size: 16px; margin: 0 0 8px; color: #f1f5f9; }
+    .info { font-size: 12px; color: #94a3b8; margin: 0 0 12px }
+    .info b { color: #fbbf24; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .panel {
+      background: #1e293b; border-radius: 8px;
+      padding: 12px; display: flex; flex-direction: column;
+    }
+    .panel h2 { font-size: 13px; margin: 0 0 8px; color: #fbbf24; }
+    .panel.callee h2 { color: #60a5fa; }
+    label { font-size: 11px; color: #94a3b8; min-width: 90px; display: inline-block; margin-bottom: 2px; }
+    input, textarea, select {
+      background: #0f172a; color: #e2e8f0;
+      border: 1px solid #334155; border-radius: 4px;
+      padding: 4px 8px; font-size: 12px; font-family: inherit;
+      width: 100%;
+    }
+    textarea { font-family: "SF Mono", Consolas, monospace; min-height: 70px; }
+    button {
+      background: #2563eb; color: white; border: 0;
+      padding: 6px 12px; border-radius: 4px; font-size: 12px;
+      cursor: pointer; font-weight: 500; margin: 2px;
+    }
+    button:disabled { background: #475569; cursor: not-allowed; }
+    button.danger { background: #dc2626; }
+    button.success { background: #16a34a; }
+    button.warn { background: #f59e0b; color: #000; }
+    .status {
+      font-size: 11px; padding: 2px 8px; border-radius: 4px;
+      background: #334155; color: #cbd5e1; display: inline-block;
+    }
+    .status.ok { background: #16a34a; color: white; }
+    .status.bad { background: #dc2626; color: white; }
+    .status.warn { background: #f59e0b; color: #000; }
+    .log {
+      max-height: 300px; overflow: auto;
+      background: #020617; border-radius: 4px;
+      padding: 6px; font-family: "SF Mono", Consolas, monospace;
+      font-size: 11px; line-height: 1.3;
+      margin-top: 8px;
+    }
+    .log-line { white-space: pre-wrap; word-break: break-all; margin-bottom: 1px; }
+    .log-line .ts { color: #64748b; }
+    .log-line.in { color: #4ade80; }
+    .log-line.out { color: #f472b6; }
+    .log-line.err { color: #f87171; background: #450a0a; padding: 1px 4px; }
+    .log-line.ice { color: #a78bfa; }
+    .log-line.ok { color: #4ade80; font-weight: bold; }
+    .section { margin-top: 8px; padding-top: 6px; border-top: 1px solid #334155; }
+    .row { display: flex; gap: 4px; align-items: center; margin-bottom: 4px; flex-wrap: wrap; }
+  </style>
+</head>
+<body>
+  <h1>🧪 WebRTC Minimal Test — simple-peer standalone</h1>
+  <p class="info">
+    Mở <b>2 tab</b> cùng page này (1 normal + 1 incognito).<br>
+    Tab 1 = <b>Caller</b> (initiator), Tab 2 = <b>Callee</b> (responder).<br>
+    Mỗi tab: 1) Init Peer → 2) Caller tạo Offer → copy SDP → Callee paste → nhận → Callee tạo Answer → copy → Caller nhận → copy ICE qua lại → check connect.<br>
+    <b>Không qua server/socket</b> — để isolate bug ở simple-peer vs WebRTC.
+  </p>
+
+  <div class="grid">
+    <div class="panel caller">
+      <h2>📞 CALLER (initiator)</h2>
+      <div class="row">
+        <label>icePolicy</label>
+        <select id="caller-policy">
+          <option value="relay">relay (chỉ TURN)</option>
+          <option value="all">all (TURN+STUN+host)</option>
+        </select>
+        <button class="success" onclick="initPeer('caller')">1. Init Peer</button>
+        <button class="warn" onclick="destroyPeer('caller')">Destroy</button>
+      </div>
+      <div class="row">
+        <label>Status</label>
+        <span id="caller-status" class="status">idle</span>
+        <button onclick="copyText('caller-offer')">Copy Offer</button>
+        <button onclick="copyText('caller-answer-input')">Copy Answer-in</button>
+        <button onclick="copyText('caller-ice-input')">Copy ICE-in</button>
+      </div>
+
+      <div class="section">
+        <label>📤 Offer SDP (copy sang tab Callee)</label>
+        <textarea id="caller-offer" readonly placeholder="Init Peer → SDP tự động hiện ở đây (Initiator=true nên emit ngay)"></textarea>
+      </div>
+
+      <div class="section">
+        <label>📥 Answer SDP (paste từ Callee)</label>
+        <textarea id="caller-answer-input" placeholder="Paste answer JSON"></textarea>
+        <button onclick="acceptAnswer('caller')">3. Nhận Answer</button>
+      </div>
+
+      <div class="section">
+        <label>📥 ICE candidates (paste từ Callee, mỗi dòng 1 JSON)</label>
+        <textarea id="caller-ice-input" placeholder='{"candidate":{"candidate":"candidate:...","sdpMLineIndex":0,"sdpMid":"0"}}'></textarea>
+        <button onclick="acceptIce('caller')">4. Nhận ICE</button>
+      </div>
+
+      <div class="log" id="caller-log"></div>
+    </div>
+
+    <div class="panel callee">
+      <h2>📞 CALLEE (responder)</h2>
+      <div class="row">
+        <label>icePolicy</label>
+        <select id="callee-policy">
+          <option value="relay">relay (chỉ TURN)</option>
+          <option value="all">all (TURN+STUN+host)</option>
+        </select>
+        <button class="success" onclick="initPeer('callee')">1. Init Peer</button>
+        <button class="warn" onclick="destroyPeer('callee')">Destroy</button>
+      </div>
+      <div class="row">
+        <label>Status</label>
+        <span id="callee-status" class="status">idle</span>
+        <button onclick="copyText('callee-offer-input')">Copy Offer-in</button>
+        <button onclick="copyText('callee-answer')">Copy Answer</button>
+        <button onclick="copyText('callee-ice-input')">Copy ICE-in</button>
+      </div>
+
+      <div class="section">
+        <label>📥 Offer SDP (paste từ Caller)</label>
+        <textarea id="callee-offer-input" placeholder="Paste offer JSON"></textarea>
+        <button onclick="acceptOffer('callee')">2. Nhận Offer → tạo Answer</button>
+      </div>
+
+      <div class="section">
+        <label>📤 Answer SDP (copy sang tab Caller)</label>
+        <textarea id="callee-answer" readonly placeholder="Sau khi nhận Offer → SDP hiện ở đây"></textarea>
+      </div>
+
+      <div class="section">
+        <label>📥 ICE candidates (paste từ Caller, mỗi dòng 1 JSON)</label>
+        <textarea id="callee-ice-input" placeholder='{"candidate":{"candidate":"candidate:...","sdpMLineIndex":0,"sdpMid":"0"}}'></textarea>
+        <button onclick="acceptIce('callee')">3. Nhận ICE</button>
+      </div>
+
+      <div class="log" id="callee-log"></div>
+    </div>
+  </div>
+
+<script src="https://cdn.jsdelivr.net/npm/simple-peer@9.11.1/simplepeer.min.js"></script>
+<script>
+(function () {
+  'use strict';
+  const SimplePeer = window.SimplePeer;
+  const peers = {};
+  const iceBuffers = { caller: [], callee: [] };
+
+  function log(side, msg, type) {
+    const el = document.getElementById(side + '-log');
+    if (!el) return;
+    const line = document.createElement('div');
+    line.className = 'log-line ' + (type || '');
+    const ts = new Date().toISOString().slice(11, 23);
+    line.innerHTML = '<span class="ts">' + ts + '</span> ' + escape(msg);
+    el.appendChild(line);
+    el.scrollTop = el.scrollHeight;
+  }
+  function escape(s) { return String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+  function setStatus(side, text, cls) {
+    const el = document.getElementById(side + '-status');
+    if (!el) return;
+    el.textContent = text;
+    el.className = 'status ' + (cls || '');
+  }
+  function copyText(id) {
+    const el = document.getElementById(id);
+    if (!el || !el.value) { alert('empty'); return; }
+    el.select();
+    navigator.clipboard?.writeText(el.value).then(
+      () => log(id.split('-')[0], '✓ copied to clipboard', 'out'),
+      () => log(id.split('-')[0], '✗ clipboard denied — copy manually', 'err')
+    );
+  }
+
+  function initPeer(side) {
+    if (peers[side]) { log(side, 'peer already exists — destroy first', 'err'); return; }
+    const policy = document.getElementById(side + '-policy').value;
+    navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      .then((stream) => {
+        log(side, '✓ got mic', 'in');
+        const peer = new SimplePeer({
+          initiator: side === 'caller',
+          trickle: true,
+          stream,
+          config: {
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:stun1.l.google.com:19302' },
+            ],
+            iceTransportPolicy: policy,
+          },
+        });
+
+        peer.on('signal', (data) => {
+          if (data.type === 'offer') {
+            log(side, '→ emit OFFER (length=' + (data.sdp?.length || 0) + ')', 'out');
+            document.getElementById(side + '-offer').value = JSON.stringify(data);
+          } else if (data.type === 'answer') {
+            log(side, '→ emit ANSWER (length=' + (data.sdp?.length || 0) + ')', 'out');
+            document.getElementById(side + '-answer').value = JSON.stringify(data);
+          } else if (data.candidate) {
+            const c = data.candidate.candidate || '';
+            const m = c.match(/typ (\w+)/);
+            const proto = c.match(/\d+ (udp|tcp)/);
+            const addr = c.match(/(\d+\.\d+\.\d+\.\d+)/);
+            log(side, '→ ICE ' + (m?m[1]:'?') + '/' + (proto?proto[1]:'?') + ' ' + (addr?addr[1]:'?') + ':' + (c.match(/(\d+) typ/)?.[1] || '?'), 'ice');
+          }
+        });
+
+        peer.on('connect', () => {
+          log(side, '✓✓✓ PEER CONNECTED', 'ok');
+          setStatus(side, 'connected ✓', 'ok');
+        });
+        peer.on('stream', (remote) => {
+          log(side, '✓ got remote stream', 'in');
+          const audio = new Audio();
+          audio.srcObject = remote;
+          audio.autoplay = true;
+        });
+        peer.on('error', (err) => {
+          log(side, '✗ peer error: ' + err.message, 'err');
+          setStatus(side, 'error', 'bad');
+        });
+        peer.on('close', () => {
+          log(side, '✗ peer closed', 'err');
+          setStatus(side, 'closed', 'bad');
+        });
+
+        // Diagnostics
+        const pc = peer._pc;
+        if (pc) {
+          pc.addEventListener('icecandidate', (e) => {
+            if (!e.candidate) log(side, 'ICE gathering complete', 'ice');
+          });
+          pc.addEventListener('iceconnectionstatechange', () => {
+            log(side, 'ICE state: ' + pc.iceConnectionState, 'ice');
+          });
+          pc.addEventListener('connectionstatechange', () => {
+            log(side, 'PC state: ' + pc.connectionState, 'ice');
+          });
+        }
+
+        peers[side] = peer;
+        setStatus(side, 'initialized (waiting for signal)', 'warn');
+        log(side, '✓ peer created (initiator=' + (side==='caller') + ', policy=' + policy + ')', 'in');
+      })
+      .catch((e) => log(side, '✗ getUserMedia failed: ' + e.message, 'err'));
+  }
+
+  function acceptOffer(side) {
+    if (!peers[side]) { log(side, 'init peer first', 'err'); return; }
+    const raw = document.getElementById(side + '-offer-input').value.trim();
+    if (!raw) { log(side, 'paste offer first', 'err'); return; }
+    try {
+      const data = JSON.parse(raw);
+      log(side, '← received OFFER (sdp.length=' + (data.sdp?.length||0) + ')', 'in');
+      peers[side].signal(data);
+      log(side, '→ signaled offer to peer (will trigger Answer soon)', 'out');
+      // After offer signaled, peer will emit Answer via signal event
+      // Wait a bit then flush ICE buffer
+      setTimeout(() => flushIceBuffer(side), 100);
+    } catch (e) {
+      log(side, '✗ signal offer failed: ' + e.message, 'err');
+    }
+  }
+
+  function acceptAnswer(side) {
+    if (!peers[side]) { log(side, 'init peer first', 'err'); return; }
+    const raw = document.getElementById(side + '-answer-input').value.trim();
+    if (!raw) { log(side, 'paste answer first', 'err'); return; }
+    try {
+      const data = JSON.parse(raw);
+      log(side, '← received ANSWER (sdp.length=' + (data.sdp?.length||0) + ')', 'in');
+      peers[side].signal(data);
+      log(side, '→ signaled answer to peer', 'out');
+      setTimeout(() => flushIceBuffer(side), 100);
+    } catch (e) {
+      log(side, '✗ signal answer failed: ' + e.message, 'err');
+    }
+  }
+
+  function acceptIce(side) {
+    if (!peers[side]) { log(side, 'init peer first', 'err'); return; }
+    const raw = document.getElementById(side + '-ice-input').value.trim();
+    if (!raw) return;
+    const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
+    let queued = 0, signaled = 0;
+    for (const line of lines) {
+      try {
+        const data = JSON.parse(line);
+        const pc = peers[side]._pc;
+        if (!pc.remoteDescription || !pc.remoteDescription.type) {
+          iceBuffers[side].push(data);
+          queued++;
+        } else {
+          peers[side].signal(data);
+          signaled++;
+        }
+      } catch (e) {
+        log(side, '✗ ICE parse failed: ' + e.message, 'err');
+      }
+    }
+    if (queued > 0) log(side, '← ICE queued ' + queued + ' (waiting remoteDesc)', 'ice');
+    if (signaled > 0) log(side, '← ICE signaled ' + signaled, 'ice');
+    document.getElementById(side + '-ice-input').value = '';
+  }
+
+  function flushIceBuffer(side) {
+    const pc = peers[side]._pc;
+    if (!pc.remoteDescription || !pc.remoteDescription.type) return;
+    const buffered = iceBuffers[side].splice(0);
+    if (buffered.length > 0) {
+      for (const data of buffered) peers[side].signal(data);
+      log(side, '← flushed ' + buffered.length + ' buffered ICE', 'ice');
+    }
+  }
+
+  function destroyPeer(side) {
+    if (peers[side]) {
+      try { peers[side].destroy(); } catch {}
+      delete peers[side];
+      log(side, 'peer destroyed', 'err');
+      setStatus(side, 'destroyed', 'bad');
+    }
+  }
+
+  // Expose
+  window.initPeer = initPeer;
+  window.acceptOffer = acceptOffer;
+  window.acceptAnswer = acceptAnswer;
+  window.acceptIce = acceptIce;
+  window.destroyPeer = destroyPeer;
+  window.copyText = copyText;
+
+  if (!SimplePeer) {
+    log('caller', '⚠ SimplePeer chưa load — kiểm tra CDN. Refresh sau 5s.', 'err');
+    log('callee', '⚠ SimplePeer chưa load — kiểm tra CDN. Refresh sau 5s.', 'err');
+  } else {
+    log('caller', '✓ simple-peer ' + SimplePeer.WEBRTC_SUPPORT + ' loaded', 'in');
+    log('callee', '✓ simple-peer ' + SimplePeer.WEBRTC_SUPPORT + ' loaded', 'in');
+  }
+})();
+</script>
+</body>
+</html>
