@@ -148,13 +148,15 @@
 
     // 3. Test TURN with all transports
     log('\n— Test TURN candidates (UDP + TCP + TLS) —');
-    log('Đợi 15s để browser generate candidates...');
+    log('Provider: ' + (creds.provider || '(unknown)') + ' · Đợi 15s để browser generate candidates...');
     const pc = new RTCPeerConnection({
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'turn:english.cfarm.vn:3478?transport=udp', username: creds.username, credential: creds.credential },
-        { urls: 'turn:english.cfarm.vn:3478?transport=tcp', username: creds.username, credential: creds.credential },
-        { urls: 'turns:english.cfarm.vn:5349?transport=tcp', username: creds.username, credential: creds.credential },
+        ...creds.urls.map(u => ({
+          urls: u,
+          username: creds.username,
+          credential: creds.credential,
+        })),
       ],
     });
     window.testPc = pc;
