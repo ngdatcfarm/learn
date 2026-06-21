@@ -67,9 +67,10 @@
 <body>
   <h1>🧪 WebRTC Minimal Test — simple-peer standalone</h1>
   <p class="info">
-    Mở <b>2 tab</b> cùng page này (1 normal + 1 incognito).<br>
+    Mở <b>2 tab</b> cùng page này (1 normal + 1 incognito, hoặc 2 browser khác nhau).<br>
     Tab 1 = <b>Caller</b> (initiator), Tab 2 = <b>Callee</b> (responder).<br>
-    Mỗi tab: 1) Init Peer → 2) Caller tạo Offer → copy SDP → Callee paste → nhận → Callee tạo Answer → copy → Caller nhận → copy ICE qua lại → check connect.<br>
+    Mỗi tab: 1) Init Peer → 2) Caller tạo Offer → copy SDP → Callee paste → nhận → Callee tạo Answer → copy → Caller nhận → connect.<br>
+    <b>trickle=false</b>: ALL ICE candidates nhúng trong SDP, KHÔNG cần copy ICE riêng.<br>
     <b>Không qua server/socket</b> — để isolate bug ở simple-peer vs WebRTC.
   </p>
 
@@ -105,9 +106,9 @@
       </div>
 
       <div class="section">
-        <label>📥 ICE candidates (paste từ Callee, mỗi dòng 1 JSON)</label>
-        <textarea id="caller-ice-input" placeholder='{"candidate":{"candidate":"candidate:...","sdpMLineIndex":0,"sdpMid":"0"}}'></textarea>
-        <button onclick="acceptIce('caller')">4. Nhận ICE</button>
+        <label>📥 ICE candidates (không cần — trickle=false đã nhúng trong SDP)</label>
+        <textarea id="caller-ice-input" placeholder="Không cần paste ICE khi dùng trickle=false. Để trống." disabled style="opacity:0.4"></textarea>
+        <button disabled style="opacity:0.4">4. Nhận ICE (disabled)</button>
       </div>
 
       <div class="log" id="caller-log"></div>
@@ -144,9 +145,9 @@
       </div>
 
       <div class="section">
-        <label>📥 ICE candidates (paste từ Caller, mỗi dòng 1 JSON)</label>
-        <textarea id="callee-ice-input" placeholder='{"candidate":{"candidate":"candidate:...","sdpMLineIndex":0,"sdpMid":"0"}}'></textarea>
-        <button onclick="acceptIce('callee')">3. Nhận ICE</button>
+        <label>📥 ICE candidates (không cần — trickle=false đã nhúng trong SDP)</label>
+        <textarea id="callee-ice-input" placeholder="Không cần paste ICE khi dùng trickle=false. Để trống." disabled style="opacity:0.4"></textarea>
+        <button disabled style="opacity:0.4">3. Nhận ICE (disabled)</button>
       </div>
 
       <div class="log" id="callee-log"></div>
@@ -196,7 +197,7 @@
         log(side, '✓ got mic', 'in');
         const peer = new SimplePeer({
           initiator: side === 'caller',
-          trickle: true,
+          trickle: false,
           stream,
           config: {
             iceServers: [
