@@ -181,7 +181,7 @@ liveHelpRouter.get("/turn-credentials", async (req: Request, res: Response) => {
   if (!user) return;
 
   try {
-    const creds = generateTurnCredentials(user.id);
+    const creds = await generateTurnCredentials(user.id);
     res.json(creds);
   } catch (e: any) {
     res.status(503).json({
