@@ -66,9 +66,9 @@ function generateTwilioCredentials(): TurnCredentials {
     urls: [
       "turn:global.turn.twilio.com:3478?transport=udp",
       "turn:global.turn.twilio.com:3478?transport=tcp",
-      "turn:global.turn.twilio.com:3478?transport=tls",
       "turn:global.turn.twilio.com:443?transport=tcp",
-      "turn:global.turn.twilio.com:443?transport=tls",
+      "turns:global.turn.twilio.com:5349?transport=tcp",
+      "turns:global.turn.twilio.com:443?transport=tcp",
     ],
     username,
     credential,
