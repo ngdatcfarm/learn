@@ -57,8 +57,11 @@ import { useAudioRecorder } from "../hooks/useAudioRecorder";
 import sound from "../utils/sound";
 import { scoreTier, SCORE_COLORS } from "../utils/format";
 import FlashcardSession from "./FlashcardSession";
+import SkillCard from "./ui/SkillCard";
+import { UserProfile, SkillId } from "../types";
 
 interface PracticeTabProps {
+  profile: UserProfile;
   onMeasured: () => Promise<void>;
 }
 
@@ -120,7 +123,7 @@ function getItemText(item: PracticeItem, mode: Mode): string {
   }
 }
 
-export default function PracticeTab({ onMeasured }: PracticeTabProps) {
+export default function PracticeTab({ profile, onMeasured }: PracticeTabProps) {
   const [mode, setMode] = useState<Mode>("dictation");
   const [items, setItems] = useState<PracticeItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -222,6 +225,24 @@ export default function PracticeTab({ onMeasured }: PracticeTabProps) {
             label="Từ vựng"
             emoji="🎴"
           />
+        </div>
+      </div>
+
+      {/* 5 KỸ NĂNG SNAPSHOT — nằm đầu tab để HS thấy context trước khi chọn mode */}
+      <div
+        className="p-4 rounded-3xl border space-y-3"
+        style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border)" }}
+      >
+        <h3
+          className="text-xs font-extrabold uppercase tracking-wider"
+          style={{ color: "var(--muted-strong)" }}
+        >
+          📊 Kỹ năng của mình
+        </h3>
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+          {(["read", "write", "listen", "speak", "learn"] as SkillId[]).map((sid) => (
+            <SkillCard key={sid} skillId={sid} skill={profile.skills[sid]} size="sm" />
+          ))}
         </div>
       </div>
 

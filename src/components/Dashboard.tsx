@@ -5,11 +5,7 @@ import {
   Sparkles,
   ArrowRight,
   Volume2,
-  Play,
-  Clock,
   BookOpen,
-  Check,
-  Trophy,
   MessageCircleHeart,
 } from "lucide-react";
 import { UserProfile, ReadingExercise, SkillId } from "../types";
@@ -201,31 +197,6 @@ export default function Dashboard({ profile, setProfile, onNavigate, onMeasured 
                 }}
                 transition={{ duration: 0.8 }}
               />
-            </div>
-
-            {/* 5 KỸ NĂNG — Learner Model */}
-            <div className="space-y-2.5 pt-2">
-              <div className="flex items-center justify-between">
-                <h4
-                  className="text-xs font-extrabold uppercase tracking-wider"
-                  style={{ color: "var(--muted-strong)" }}
-                >
-                  🧠 5 kỹ năng của mình
-                </h4>
-                <span
-                  className="text-[10px] font-bold"
-                  style={{ color: "var(--muted)" }}
-                  title="Cần ≥ 5 lần đo mới tin được"
-                >
-                  {Object.values(profile.skills).reduce((s, sk) => s + sk.attempts, 0)} lần đo
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-5 gap-2.5">
-                {skillOrder.map((sid) => (
-                  <SkillCard key={sid} skillId={sid} skill={profile.skills[sid]} size="md" />
-                ))}
-              </div>
             </div>
 
             {/* Reading scenarios */}
@@ -533,48 +504,50 @@ export default function Dashboard({ profile, setProfile, onNavigate, onMeasured 
               Mở phòng chat <ArrowRight className="w-4 h-4" />
             </button>
           </div>
-
-          {/* WEEKLY CHALLENGES */}
-          <div
-            className="p-5 rounded-3xl border space-y-4 shadow-sm"
-            style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border)" }}
-          >
-            <h3 className="text-base font-extrabold tracking-tight flex items-center gap-1.5">
-              <Trophy className="w-5 h-5" style={{ color: "var(--secondary)" }} />
-              Thử thách tuần này
-            </h3>
-
-            <div className="space-y-3.5 pt-2">
-              {[
-                { id: "speak", label: "Luyện Nói 30 lượt", current: profile.skills.speak.attempts, total: 30, color: "var(--primary)" },
-                { id: "stars", label: "Đạt 300 ⭐", current: profile.stars, total: 300, color: "var(--accent)" },
-                { id: "reading", label: "Hoàn thành 3 bài đọc", current: 1, total: 3, color: "var(--secondary)" },
-              ].map((c) => {
-                const pct = Math.min(100, (c.current / c.total) * 100);
-                return (
-                  <div key={c.id} className="space-y-1.5">
-                    <div className="flex justify-between text-xs" style={{ color: "var(--muted)" }}>
-                      <span className="font-medium">{c.label}</span>
-                      <span className="font-extrabold" style={{ color: "var(--foreground)" }}>
-                        {c.current}/{c.total}
-                      </span>
-                    </div>
-                    <div
-                      className="w-full h-1.5 rounded-full overflow-hidden"
-                      style={{ backgroundColor: "var(--bg-soft)" }}
-                    >
-                      <div
-                        className="h-full rounded-full"
-                        style={{ width: `${pct}%`, backgroundColor: c.color }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
         </div>
       </div>
+
+      {/* TIẾN BỘ CỦA MÌNH — collapsible details block (progressive disclosure) */}
+      <details
+        className="p-5 rounded-3xl border shadow-sm"
+        style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border)" }}
+      >
+        <summary
+          className="cursor-pointer text-base font-extrabold tracking-tight flex items-center gap-2 list-none"
+          style={{ color: "var(--foreground)" }}
+        >
+          <span>📈</span>
+          Xem tiến bộ của mình
+          <span
+            className="ml-auto text-[10px] font-bold"
+            style={{ color: "var(--muted)" }}
+          >
+            (chạm để mở)
+          </span>
+        </summary>
+        <div className="space-y-3 pt-4">
+          <p className="text-xs" style={{ color: "var(--muted)" }}>
+            5 kỹ năng được đo mỗi khi bạn đọc, viết, nghe, nói hoặc học từ mới. Xu hướng tăng nghĩa là bạn đang tiến bộ!
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-5 gap-2.5">
+            {skillOrder.map((sid) => (
+              <SkillCard key={sid} skillId={sid} skill={profile.skills[sid]} size="md" />
+            ))}
+          </div>
+          <div
+            className="pt-3 mt-2 border-t text-[10px] font-bold flex items-center gap-3 flex-wrap"
+            style={{ borderColor: "var(--border-soft)", color: "var(--muted)" }}
+          >
+            <span>
+              Tổng {Object.values(profile.skills).reduce((s, sk) => s + sk.attempts, 0)} lần đo
+            </span>
+            <span>•</span>
+            <span>
+              Cần ≥ 5 lần đo mỗi kỹ năng để số liệu đáng tin
+            </span>
+          </div>
+        </div>
+      </details>
     </div>
   );
 }

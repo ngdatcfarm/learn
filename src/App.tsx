@@ -564,7 +564,7 @@ export default function App() {
                   exit={{ opacity: 0, y: -8 }}
                   transition={{ duration: 0.2 }}
                 >
-                  <PracticeTab onMeasured={refreshSkills} />
+                  <PracticeTab profile={profile} onMeasured={refreshSkills} />
                 </motion.div>
               )}
               {activeTab === "ailab" && (
