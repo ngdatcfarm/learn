@@ -13,19 +13,18 @@
 --   - live_help_sessions.class_session_id (FK cho 1-1 voice qua class session trigger)
 --   - live_help_sessions.trigger           thêm 'class_session'
 --   - engagement_events.event              thêm 8 event mới (class_session_started ... class_board_dismiss_requested)
+--
+-- LƯU Ý THỨ TỰ (bug fix 2026-06-23):
+--   class_sessions phải CREATE trước khi ALTER live_help_sessions thêm FK
+--   trỏ vào nó. migrate.ts split theo `;` và chạy tuần tự, nên reorder trong
+--   file này là đủ — không cần đổi logic ở migrate.ts.
 -- =====================================================================
 
 -- 1. Extend live_help_sessions.trigger enum (additive — giữ old values)
 ALTER TABLE live_help_sessions
   MODIFY COLUMN `trigger` ENUM('student_request','teacher_proactive','teacher_observe','class_session') NOT NULL;
 
--- 2. Add class_session_id column + FK
-ALTER TABLE live_help_sessions
-  ADD COLUMN class_session_id VARCHAR(36) NULL AFTER class_id,
-  ADD KEY idx_lhs_class_session (class_session_id),
-  ADD CONSTRAINT fk_lhs_class_session FOREIGN KEY (class_session_id) REFERENCES class_sessions(id) ON DELETE SET NULL;
-
--- 3. Extend engagement_events.event enum (additive)
+-- 2. Extend engagement_events.event enum (additive)
 ALTER TABLE engagement_events
   MODIFY COLUMN event ENUM(
     'session_start','session_end','task_done','task_started','task_abandoned',
@@ -37,7 +36,7 @@ ALTER TABLE engagement_events
     'class_board_pushed','class_board_dismiss_requested'
   ) NOT NULL;
 
--- 4. Main class session table
+-- 3. Main class session table (PHẢI tạo trước khi các bước sau FK vào nó)
 CREATE TABLE class_sessions (
   id                       VARCHAR(36)  NOT NULL,
   class_id                 VARCHAR(36)  NOT NULL,
@@ -54,6 +53,12 @@ CREATE TABLE class_sessions (
   CONSTRAINT fk_cs_class   FOREIGN KEY (class_id)   REFERENCES classes(id) ON DELETE CASCADE,
   CONSTRAINT fk_cs_teacher FOREIGN KEY (teacher_id) REFERENCES users(id)  ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 4. Add class_session_id column + FK (giờ class_sessions đã tồn tại)
+ALTER TABLE live_help_sessions
+  ADD COLUMN class_session_id VARCHAR(36) NULL AFTER class_id,
+  ADD KEY idx_lhs_class_session (class_session_id),
+  ADD CONSTRAINT fk_lhs_class_session FOREIGN KEY (class_session_id) REFERENCES class_sessions(id) ON DELETE SET NULL;
 
 -- 5. Hand-up queue — HS giơ tay xin hỗ trợ trong buổi học
 CREATE TABLE class_session_handups (
