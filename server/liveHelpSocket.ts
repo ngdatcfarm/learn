@@ -816,6 +816,179 @@ export function initLiveHelpSocket(): Namespace {
         socket.emit("error", { message: err.message });
       }
     });
+
+    // ============================================================
+    // Step 13b — Class Session ("Lớp hôm nay") realtime events
+    //
+    // Room: `class:<session_id>` (cả GV + HS join khi class_sessions.status='active')
+    //
+    // Client → server:
+    //   - class:join / class:leave           (subscribe tới class room)
+    //   - class:state-req                    (xin state hiện tại)
+    //   - class:tab-visibility               (HS gửi visibility → broadcast + log)
+    //
+    // Server → client:
+    //   - class:state                        (current session state)
+    //   - class:tab-state-changed            (GV nhận tab visibility event)
+    // ============================================================
+
+    interface ClassSessionSocketRow extends RowDataPacket {
+      id: string;
+      class_id: string;
+      teacher_id: string;
+      status: "planned" | "active" | "ended" | "cancelled";
+    }
+
+    /** Verify user thuộc class_sessions (teacher phụ trách OR student member). */
+    async function verifyClassSessionAccess(
+      classSessionId: string,
+      u: SocketUser
+    ): Promise<
+      | { ok: true; session: ClassSessionSocketRow }
+      | { ok: false; error: string }
+    > {
+      const session = await queryOne<ClassSessionSocketRow>(
+        `SELECT id, class_id, teacher_id, status FROM class_sessions WHERE id = ?`,
+        [classSessionId]
+      );
+      if (!session) return { ok: false, error: "Class session not found" };
+      if (u.role === "teacher" && session.teacher_id !== u.id) {
+        return { ok: false, error: "Not your class session" };
+      }
+      if (u.role === "student") {
+        const inClass = await queryOne<RowDataPacket>(
+          `SELECT 1 FROM class_members WHERE class_id = ? AND student_id = ? LIMIT 1`,
+          [session.class_id, u.id]
+        );
+        if (!inClass) return { ok: false, error: "Not in this class" };
+      }
+      if (u.role !== "student" && u.role !== "teacher") {
+        return { ok: false, error: "Role not allowed" };
+      }
+      return { ok: true, session };
+    }
+
+    // ---- class:join (subscribe tới class:<sessionId> room) ----
+    socket.on("class:join", async (payload: { classSessionId?: string }) => {
+      try {
+        const classSessionId = payload?.classSessionId;
+        if (!classSessionId) {
+          return socket.emit("error", { message: "Missing classSessionId" });
+        }
+        const access = await verifyClassSessionAccess(classSessionId, user);
+        if (access.ok === false) {
+          return socket.emit("error", { message: access.error });
+        }
+        await socket.join(`class:${classSessionId}`);
+        // Trả state hiện tại cho client
+        socket.emit("class:state", {
+          class_session_id: classSessionId,
+          status: access.session.status,
+          class_id: access.session.class_id,
+          teacher_id: access.session.teacher_id,
+        });
+      } catch (err: any) {
+        console.error("[live-help socket] class:join failed:", err);
+        socket.emit("error", { message: err.message });
+      }
+    });
+
+    // ---- class:leave ----
+    socket.on("class:leave", async (payload: { classSessionId?: string }) => {
+      const classSessionId = payload?.classSessionId;
+      if (!classSessionId) return;
+      await socket.leave(`class:${classSessionId}`);
+    });
+
+    // ---- class:state-req (HS reconnect → xin state) ----
+    socket.on("class:state-req", async (payload: { classSessionId?: string }) => {
+      try {
+        const classSessionId = payload?.classSessionId;
+        if (!classSessionId) return;
+        const access = await verifyClassSessionAccess(classSessionId, user);
+        if (access.ok === false) {
+          return socket.emit("error", { message: access.error });
+        }
+        socket.emit("class:state", {
+          class_session_id: classSessionId,
+          status: access.session.status,
+          class_id: access.session.class_id,
+          teacher_id: access.session.teacher_id,
+        });
+      } catch (err: any) {
+        socket.emit("error", { message: err.message });
+      }
+    });
+
+    // ---- class:tab-visibility (student → broadcast to GV + log) ----
+    socket.on(
+      "class:tab-visibility",
+      async (payload: {
+        classSessionId?: string;
+        event?: "visible" | "hidden";
+        visible_ms?: number;
+      }) => {
+        try {
+          if (user.role !== "student") {
+            return socket.emit("error", { message: "Only student reports visibility" });
+          }
+          const classSessionId = payload?.classSessionId;
+          const event = payload?.event;
+          if (!classSessionId || (event !== "visible" && event !== "hidden")) {
+            return socket.emit("error", { message: "Missing classSessionId or event" });
+          }
+          const access = await verifyClassSessionAccess(classSessionId, user);
+          if (access.ok === false) {
+            return socket.emit("error", { message: access.error });
+          }
+
+          const now = new Date().toISOString().slice(0, 19).replace("T", " ");
+          const visibleMs =
+            typeof payload.visible_ms === "number"
+              ? Math.max(0, Math.floor(payload.visible_ms))
+              : 0;
+
+          // Append-only log
+          await query(
+            `INSERT INTO class_session_tab_events
+               (id, class_session_id, student_id, event, session_visible_ms, occurred_at)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [
+              crypto.randomUUID(),
+              classSessionId,
+              user.id,
+              event,
+              visibleMs,
+              now,
+            ]
+          );
+
+          // Engagement event
+          await query(
+            `INSERT INTO engagement_events (id, user_id, event, value, context_json, occurred_at)
+             VALUES (?, ?, ?, NULL, ?, ?)`,
+            [
+              crypto.randomUUID(),
+              user.id,
+              event === "visible" ? "class_tab_visible" : "class_tab_hidden",
+              JSON.stringify({ class_session_id: classSessionId }),
+              now,
+            ]
+          );
+
+          // Broadcast to GV (room `class:<id>`)
+          liveHelpNs.to(`class:${classSessionId}`).emit("class:tab-state-changed", {
+            student_id: user.id,
+            event,
+            occurred_at: now,
+            visible_ms: visibleMs,
+          });
+        } catch (err: any) {
+          console.error("[live-help socket] class:tab-visibility failed:", err);
+          socket.emit("error", { message: err.message });
+        }
+      }
+    );
   });
 
   console.log("✓ /live-help namespace initialized");

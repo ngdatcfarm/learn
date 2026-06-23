@@ -59,6 +59,7 @@ export const LIVE_HELP_TRIGGERS = [
   "student_request",
   "teacher_proactive",
   "teacher_observe",
+  "class_session",
 ] as const;
 export type LiveHelpTrigger = (typeof LIVE_HELP_TRIGGERS)[number];
 
@@ -66,6 +67,8 @@ export type LiveHelpTrigger = (typeof LIVE_HELP_TRIGGERS)[number];
  * Engagement event types (`engagement_events.event`).
  * Union của public track endpoint (engagement.ts) + debug injector (debug.ts).
  * Khi thêm event mới, cả 2 router auto pick up.
+ *
+ * Step 13b: thêm 8 class session events.
  */
 export const VALID_ENGAGEMENT_EVENTS = [
   "session_start",
@@ -79,5 +82,29 @@ export const VALID_ENGAGEMENT_EVENTS = [
   "highlight_used",
   "voice_call_started",
   "voice_call_ended",
+  "class_session_started",
+  "class_session_ended",
+  "class_tab_visible",
+  "class_tab_hidden",
+  "class_hand_up",
+  "class_hand_up_claimed",
+  "class_board_pushed",
+  "class_board_dismiss_requested",
 ] as const;
 export type EngagementEvent = (typeof VALID_ENGAGEMENT_EVENTS)[number];
+
+// ============================================================
+// Step 13b — Class Session enums (mirror db/migrations/011)
+// ============================================================
+
+/** Class session lifecycle. */
+export const CLASS_SESSION_STATUSES = ["planned", "active", "ended", "cancelled"] as const;
+export type ClassSessionStatus = (typeof CLASS_SESSION_STATUSES)[number];
+
+/** Hand-up queue status. */
+export const HANDUP_STATUSES = ["queued", "claimed", "dismissed", "cancelled"] as const;
+export type HandupStatus = (typeof HANDUP_STATUSES)[number];
+
+/** Tab visibility event. */
+export const TAB_EVENT_KINDS = ["visible", "hidden"] as const;
+export type TabEventKind = (typeof TAB_EVENT_KINDS)[number];

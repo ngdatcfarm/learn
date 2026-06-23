@@ -1403,3 +1403,203 @@ export async function saveWhiteboardStrokes(
     { strokes }
   );
 }
+
+// ============================================================
+// Step 13b — Class Session ("Lớp hôm nay")
+// ============================================================
+
+export interface ClassSessionLite {
+  id: string;
+  class_id: string;
+  teacher_id?: string;
+  started_at?: string | null;
+  ended_at?: string | null;
+  status: "planned" | "active" | "ended" | "cancelled";
+}
+
+export interface ClassSessionCountdown {
+  label: string;
+  approx_minutes: number;
+}
+
+export interface ClassSessionReviewPayload {
+  summary_md?: string;
+  strengths?: string[];
+  needs_review?: string[];
+  tip_from_teacher_md?: string;
+}
+
+export interface ClassSessionReview {
+  payload: ClassSessionReviewPayload | null;
+  model: string;
+  generated_at: string;
+}
+
+export interface ClassSessionTodayStudent {
+  session: ClassSessionLite | null;
+  countdown: ClassSessionCountdown | null;
+  review: ClassSessionReview | null;
+  class_id: string | null;
+}
+
+export interface ClassSessionTodayTeacher {
+  active_session: ClassSessionLite | null;
+  recent_past: Array<{
+    id: string;
+    class_id: string;
+    started_at: string | null;
+    ended_at: string | null;
+    status: ClassSessionLite["status"];
+  }>;
+}
+
+export interface ClassSessionHandup {
+  id: string;
+  class_session_id: string;
+  student_id: string;
+  student_name?: string;
+  question_id: string | null;
+  message: string | null;
+  queue_position: number;
+  status: "queued" | "claimed" | "dismissed" | "cancelled";
+  created_at: string;
+  claimed_at: string | null;
+}
+
+/**
+ * GET /api/class-sessions/today
+ * Student: xem có buổi active không + countdown + review hôm qua.
+ * Teacher: xem buổi active + recent ended.
+ */
+export async function getClassSessionToday(): Promise<
+  ClassSessionTodayStudent | ClassSessionTodayTeacher
+> {
+  return request("GET", "/api/class-sessions/today");
+}
+
+/**
+ * POST /api/class-sessions (teacher)
+ * Start class session.
+ */
+export async function startClassSession(
+  classId: string,
+  plannedQuestionIds?: string[]
+): Promise<{ ok: true; session_id: string; started_at: string }> {
+  return request("POST", "/api/class-sessions", {
+    class_id: classId,
+    planned_question_ids: plannedQuestionIds,
+  });
+}
+
+/**
+ * POST /api/class-sessions/:id/end (teacher)
+ */
+export async function endClassSession(
+  sessionId: string
+): Promise<{ ok: true; ended_at?: string; already_ended?: boolean }> {
+  return request("POST", `/api/class-sessions/${sessionId}/end`);
+}
+
+/**
+ * POST /api/class-sessions/:id/hand-up (student)
+ */
+export async function classHandUp(
+  sessionId: string,
+  input: { question_id?: string; message?: string } = {}
+): Promise<{ ok: true; handup_id: string; queue_position: number }> {
+  return request("POST", `/api/class-sessions/${sessionId}/hand-up`, input);
+}
+
+/**
+ * GET /api/class-sessions/:id/handups (teacher)
+ */
+export async function classListHandups(
+  sessionId: string
+): Promise<{ handups: ClassSessionHandup[]; count: number }> {
+  return request("GET", `/api/class-sessions/${sessionId}/handups`);
+}
+
+/**
+ * POST /api/class-sessions/:id/hand-ups/:huId/claim (teacher)
+ * → auto-create live_help_session với trigger='class_session'
+ */
+export async function classClaimHandUp(
+  sessionId: string,
+  handupId: string
+): Promise<{ ok: true; live_help_session_id: string; handup_id: string }> {
+  return request(
+    "POST",
+    `/api/class-sessions/${sessionId}/hand-ups/${handupId}/claim`
+  );
+}
+
+/**
+ * POST /api/class-sessions/:id/board-push (teacher)
+ */
+export async function classBoardPush(
+  sessionId: string,
+  input: { student_id: string; question_id?: string; note?: string }
+): Promise<{ ok: true; board_id: string; created_at: string }> {
+  return request("POST", `/api/class-sessions/${sessionId}/board-push`, input);
+}
+
+/**
+ * POST /api/class-sessions/:id/board-pushes/:bpId/dismiss-request (student)
+ */
+export async function classBoardDismissRequest(
+  sessionId: string,
+  boardId: string
+): Promise<{ ok: true; requested_at?: string }> {
+  return request(
+    "POST",
+    `/api/class-sessions/${sessionId}/board-pushes/${boardId}/dismiss-request`
+  );
+}
+
+/**
+ * POST /api/class-sessions/:id/board-pushes/:bpId/dismiss-approve (teacher)
+ */
+export async function classBoardDismissApprove(
+  sessionId: string,
+  boardId: string
+): Promise<{ ok: true; dismissed_at?: string }> {
+  return request(
+    "POST",
+    `/api/class-sessions/${sessionId}/board-pushes/${boardId}/dismiss-approve`
+  );
+}
+
+/**
+ * POST /api/class-sessions/:id/tab-visibility (student)
+ * REST mirror của socket class:tab-visibility event.
+ */
+export async function classTabVisibility(
+  sessionId: string,
+  event: "visible" | "hidden",
+  visibleMs?: number
+): Promise<{ ok: true }> {
+  return request("POST", `/api/class-sessions/${sessionId}/tab-visibility`, {
+    event,
+    visible_ms: visibleMs,
+  });
+}
+
+/**
+ * GET /api/class-sessions/:id/review (student/teacher)
+ */
+export async function classGetReview(
+  sessionId: string
+): Promise<{ review: ClassSessionReview | null; session_id: string }> {
+  return request("GET", `/api/class-sessions/${sessionId}/review`);
+}
+
+/**
+ * POST /api/debug/run-class-session-review-now (admin)
+ * Debug endpoint để trigger review ngay.
+ */
+export async function debugRunClassSessionReviewNow(): Promise<{
+  ok: true;
+  processed: number;
+}> {
+  return request("POST", "/api/debug/run-class-session-review-now");
+}

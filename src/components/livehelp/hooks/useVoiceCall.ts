@@ -45,6 +45,12 @@ export interface UseVoiceCallOptions {
   sessionId?: string;
   /** Auto-answer incoming call (nếu false → UI hiển thị "Cuộc gọi đến" + nút accept). */
   autoAnswer?: boolean;
+  /**
+   * Step 13b Phase 3: bắt đầu với mic MUTED.
+   * ClassSessionView của HS dùng true — HS không tự bật mic khi vào buổi,
+   * chỉ bật khi GV gọi 1-1 voice (claim hand-up).
+   */
+  initialMuted?: boolean;
 }
 
 export interface UseVoiceCallReturn {
@@ -73,9 +79,10 @@ export function useVoiceCall({
   socket,
   sessionId,
   autoAnswer = false,
+  initialMuted = false,
 }: UseVoiceCallOptions): UseVoiceCallReturn {
   const [status, setStatus] = useState<CallStatus>("idle");
-  const [muted, setMuted] = useState(false);
+  const [muted, setMuted] = useState(initialMuted);
   const [error, setError] = useState<string | null>(null);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);

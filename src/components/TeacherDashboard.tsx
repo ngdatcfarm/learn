@@ -35,6 +35,7 @@ import {
 import sound from "../utils/sound";
 import { formatSkillValue } from "../utils/format";
 import KpiCard from "./ui/KpiCard";
+import TeacherClassSessionManager from "./lopHomNay/TeacherClassSessionManager";
 import { TeacherLiveHelpPane, ObserveModePane } from "./livehelp";
 
 const SAVED_CLASS_KEY = "apex_teacher_class";
@@ -289,6 +290,13 @@ export default function TeacherDashboard() {
       {/* Step 12d: Lớp đang học — GV-driven classroom observe */}
       <LiveStudentsSection
         onObserveStudent={(student) => setObservingStudent(student)}
+      />
+
+      {/* Step 13b Phase 6: "Lớp hôm nay" — GV mở lớp realtime + giám sát HS */}
+      <TeacherClassSessionManager
+        classId={cls.id}
+        students={students}
+        onOpenHelpSession={setActiveHelpSession}
       />
 
       <ClassSection

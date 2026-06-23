@@ -446,3 +446,39 @@ debugRouter.post("/observe/force-create", async (req: Request, res: Response) =>
     teacher_name: teacher.name,
   });
 });
+
+// ============================================================
+// Class session review (Step 13b Phase 5)
+// ============================================================
+
+/**
+ * POST /api/debug/run-class-session-review-now
+ *
+ * Force-run classSessionReview cron job (skip time window check).
+ * Dùng để test AI review pipeline ngay sau khi end 1 class session.
+ */
+debugRouter.post(
+  "/run-class-session-review-now",
+  async (req: Request, res: Response) => {
+    const admin = await requireRole(req, res, ["admin"]);
+    if (!admin) return;
+
+    try {
+      // Dynamic import để tránh circular dependency với cron init
+      const { runClassSessionReview } = await import("./jobs/classSessionReview");
+      const result = await runClassSessionReview(true); // skipTimeWindow=true
+      await logAudit({
+        actorId: admin.id,
+        action: "debug.class_session_review.force_run",
+        targetType: "class_session_review",
+        targetId: null,
+        details: { ...result },
+        ip: req.ip,
+      });
+      res.json({ ok: true, ...result });
+    } catch (err: any) {
+      console.error("[debug] class session review failed:", err);
+      res.status(500).json({ error: err.message || "Run review thất bại." });
+    }
+  }
+);

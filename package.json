@@ -26,6 +26,7 @@
     "motion": "^12.23.24",
     "multer": "^1.4.5-lts.1",
     "mysql2": "^3.22.5",
+    "openai": "^4.79.0",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "simple-peer": "^9.11.1",

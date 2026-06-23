@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
-  Bot,
   Layers,
   Volume2,
   VolumeX,
@@ -11,6 +10,7 @@ import {
   LayoutDashboard,
   LogOut,
   Headphones,
+  GraduationCap,
 } from "lucide-react";
 import {
   UserProfile,
@@ -37,7 +37,6 @@ import {
 import Dashboard from "./components/Dashboard";
 import CoursesTab from "./components/CoursesTab";
 import PracticeTab from "./components/PracticeTab";
-import AILabTab from "./components/AILabTab";
 import ProfileModal from "./components/ProfileModal";
 import LoginScreen from "./components/LoginScreen";
 import TeacherDashboard from "./components/TeacherDashboard";
@@ -45,7 +44,8 @@ import AdminDashboard from "./components/AdminDashboard";
 import ParentDashboard from "./components/ParentDashboard";
 import { InboxBell } from "./components/InboxBell";
 import InboxPopup from "./components/InboxPopup";
-import { LiveHelpIndicator } from "./components/livehelp";
+import AiChatPopup from "./components/AiChatPopup";
+import LopHomNayTab from "./components/lopHomNay/LopHomNayTab";
 
 type Theme = "light" | "dark";
 
@@ -125,8 +125,9 @@ export default function App() {
   const [user, setUser] = useState<ApiUser | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"dashboard" | "courses" | "practice" | "ailab">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "courses" | "practice" | "lopHomNay">("dashboard");
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [aiChatOpen, setAiChatOpen] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [theme, setTheme] = useState<Theme>("dark");
   const [inboxOpen, setInboxOpen] = useState(false);
@@ -377,11 +378,11 @@ export default function App() {
     }
   };
 
-  const navItems: { id: "dashboard" | "courses" | "practice" | "ailab"; label: string; icon: any; emoji: string }[] = [
+  const navItems: { id: "dashboard" | "courses" | "practice" | "lopHomNay"; label: string; icon: any; emoji: string }[] = [
     { id: "dashboard", label: "Hôm nay", icon: LayoutDashboard, emoji: "🏠" },
     { id: "courses", label: "Khóa học", icon: Layers, emoji: "📚" },
     { id: "practice", label: "Luyện tập", icon: Headphones, emoji: "🎯" },
-    { id: "ailab", label: "Chat AI", icon: Bot, emoji: "💬" },
+    { id: "lopHomNay", label: "Lớp hôm nay", icon: GraduationCap, emoji: "🎓" },
   ];
 
   // ============================================================
@@ -542,7 +543,13 @@ export default function App() {
                   exit={{ opacity: 0, y: -8 }}
                   transition={{ duration: 0.2 }}
                 >
-                  <Dashboard profile={profile} setProfile={handleUpdateProfile} onNavigate={setActiveTab} onMeasured={refreshSkills} />
+                  <Dashboard
+                    profile={profile}
+                    setProfile={handleUpdateProfile}
+                    onNavigate={setActiveTab}
+                    onOpenAiChat={() => setAiChatOpen(true)}
+                    onMeasured={refreshSkills}
+                  />
                 </motion.div>
               )}
               {activeTab === "courses" && (
@@ -553,7 +560,7 @@ export default function App() {
                   exit={{ opacity: 0, y: -8 }}
                   transition={{ duration: 0.2 }}
                 >
-                  <CoursesTab onStartChat={() => setActiveTab("ailab")} />
+                  <CoursesTab onOpenAiChat={() => setAiChatOpen(true)} />
                 </motion.div>
               )}
               {activeTab === "practice" && (
@@ -567,15 +574,15 @@ export default function App() {
                   <PracticeTab profile={profile} onMeasured={refreshSkills} />
                 </motion.div>
               )}
-              {activeTab === "ailab" && (
+              {activeTab === "lopHomNay" && (
                 <motion.div
-                  key="ailab"
+                  key="lopHomNay"
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -8 }}
                   transition={{ duration: 0.2 }}
                 >
-                  <AILabTab profile={profile} setProfile={handleUpdateProfile} onMeasured={refreshSkills} />
+                  <LopHomNayTab onOpenAiChat={() => setAiChatOpen(true)} />
                 </motion.div>
               )}
             </AnimatePresence>
@@ -671,8 +678,16 @@ export default function App() {
           onUnreadChange={setInboxUnreadCount}
         />
 
-        {/* LIVE HELP INDICATOR — floating widget cho HS (Step 12a: Cấp 1 text hint) */}
-        {!isStaff && <LiveHelpIndicator />}
+        {/* AI CHAT POPUP — Step 13b Phase 7: replaces old LiveHelpIndicator + AI bottom-nav tab */}
+        {profile && (
+          <AiChatPopup
+            open={aiChatOpen}
+            onClose={() => setAiChatOpen(false)}
+            profile={profile}
+            setProfile={handleUpdateProfile}
+            onMeasured={refreshSkills}
+          />
+        )}
       </div>
     </ThemeContext.Provider>
   );

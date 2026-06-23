@@ -17,11 +17,13 @@ import SkillCard from "./ui/SkillCard";
 interface DashboardProps {
   profile: UserProfile;
   setProfile: (p: UserProfile) => void;
-  onNavigate: (tab: "dashboard" | "courses" | "ailab") => void;
+  onNavigate: (tab: "dashboard" | "courses" | "lopHomNay") => void;
+  /** Optional: open AI chat popup (Step 13b Phase 7). */
+  onOpenAiChat?: () => void;
   onMeasured: () => Promise<void>;
 }
 
-export default function Dashboard({ profile, setProfile, onNavigate, onMeasured }: DashboardProps) {
+export default function Dashboard({ profile, setProfile, onNavigate, onOpenAiChat, onMeasured }: DashboardProps) {
   const [selectedReadId, setSelectedReadId] = useState<string | null>(null);
   const [userAnswers, setUserAnswers] = useState<Record<string, string>>({});
   const [readFeedbacks, setReadFeedbacks] = useState<Record<string, { isCorrect: boolean; checked: boolean }>>({});
@@ -493,7 +495,11 @@ export default function Dashboard({ profile, setProfile, onNavigate, onMeasured 
             <button
               onClick={() => {
                 sound.playClick();
-                onNavigate("ailab");
+                if (onOpenAiChat) {
+                  onOpenAiChat();
+                } else {
+                  onNavigate("lopHomNay");
+                }
               }}
               className="w-full py-3.5 px-4 rounded-xl text-sm font-extrabold transition-all flex items-center justify-center gap-1.5 relative z-10"
               style={{

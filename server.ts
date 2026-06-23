@@ -19,7 +19,6 @@ import path from "node:path";
 import fs from "node:fs";
 import http from "node:http";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import { getPool, pingDb } from "./db/client";
 import { migrate } from "./db/migrate";
@@ -46,6 +45,9 @@ import { runParentReports } from "./server/jobs/parentReports";
 import { runDbBackup } from "./server/jobs/dbBackup";
 import { runStreakFreeze } from "./server/jobs/streakFreeze";
 import { runStreakNudge } from "./server/jobs/streakNudge";
+import { createAiProvider } from "./server/ai/index";
+import { classSessionRouter } from "./server/classSession";
+import { runClassSessionReview } from "./server/jobs/classSessionReview";
 
 dotenv.config();
 
@@ -92,19 +94,9 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 // ============================================================
-// Gemini AI (cho /api/tutor/* endpoints)
+// AI Provider (Step 13b Phase 0 — factory chọn MiniMax/Gemini/Stub)
 // ============================================================
-let ai: GoogleGenAI | null = null;
-try {
-  if (process.env.GEMINI_API_KEY) {
-    ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-    console.log("✓ Gemini API initialized");
-  } else {
-    console.warn("⚠  GEMINI_API_KEY not set — AI endpoints chạy chế độ offline fallback");
-  }
-} catch (err) {
-  console.error("Failed to init Gemini:", err);
-}
+const aiProvider = createAiProvider();
 
 // ============================================================
 // API Routes
@@ -118,15 +110,16 @@ app.use("/api/skills", skillsRouter);
 app.use("/api/engagement", engagementRouter);
 app.use("/api/dashboard", dashboardRouter);
 app.use("/api/question-bank", questionBankRouter);
-app.use("/api/tutor", aiRouter(ai));
+app.use("/api/tutor", aiRouter(aiProvider));
 app.use("/api/admin", adminRouter);
 app.use("/api/me", profileRouter);
 app.use("/api/messages", messagingRouter);
 app.use("/api/practice/audio", audioRouter);
-app.use("/api/practice", practiceRouter(ai));
+app.use("/api/practice", practiceRouter(aiProvider));
 app.use("/api/flashcards", flashcardsRouter());
 app.use("/api/live/help", liveHelpRouter);
 app.use("/api/live/teach", teachRouter);
+app.use("/api/class-sessions", classSessionRouter);
 app.use("/api/debug", debugRouter); // Step 12d debug dashboard (admin only)
 
 // Static serve for uploaded audio files (Step 9a). Mount BEFORE Vite so dev also works.
@@ -144,6 +137,9 @@ registerJob("send_parent_reports", 60 * 60 * 1000, runParentReports);
 registerJob("db_backup", 60 * 60 * 1000, runDbBackup); // Step 10a — daily at BACKUP_HOUR
 registerJob("streak_freeze", 60 * 60 * 1000, runStreakFreeze); // Step 11 — daily at 00:05
 registerJob("streak_nudge", 60 * 60 * 1000, runStreakNudge); // Step 11 — daily at 19:00
+registerJob("class_session_review", 60 * 60 * 1000, async () => {
+  await runClassSessionReview();
+}); // Step 13b Phase 5
 startCronJobs();
 
 // 404 cho API

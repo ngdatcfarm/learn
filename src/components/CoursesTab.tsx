@@ -18,7 +18,7 @@ import { COURSES_DATA } from "../data/coursesData";
 import sound from "../utils/sound";
 
 interface CoursesTabProps {
-  onStartChat: () => void;
+  onOpenAiChat: () => void;
 }
 
 const difficultyStyle: Record<string, { bg: string; fg: string; bd: string; emoji: string }> = {
@@ -35,7 +35,7 @@ const categoryEmoji: Record<string, string> = {
   Vocabulary: "🔤",
 };
 
-export default function CoursesTab({ onStartChat }: CoursesTabProps) {
+export default function CoursesTab({ onOpenAiChat }: CoursesTabProps) {
   return (
     <div className="w-full max-w-5xl mx-auto space-y-6">
       {/* HEADER */}
@@ -181,7 +181,7 @@ export default function CoursesTab({ onStartChat }: CoursesTabProps) {
           <button
             onClick={() => {
               sound.playClick();
-              onStartChat();
+              onOpenAiChat();
             }}
             className="text-xs font-extrabold inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border shrink-0"
             style={{

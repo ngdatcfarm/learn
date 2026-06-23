@@ -22,12 +22,20 @@ export interface HighlightOverlayProps {
   highlight: HighlightEvent | null;
   teacherName?: string;
   onDismiss?: () => void;
+  /**
+   * Step 13b Phase 4: hiển thị nút X (dismiss) hay không.
+   * - Highlight bình thường: true (HS tự tắt được).
+   * - ClassBoardOverlay (forced-focus): false — HS không dismiss được,
+   *   phải xin GV approve.
+   */
+  dismissable?: boolean;
 }
 
 export function HighlightOverlay({
   highlight,
   teacherName = "GV",
   onDismiss,
+  dismissable = true,
 }: HighlightOverlayProps) {
   return (
     <AnimatePresence>
@@ -76,7 +84,7 @@ export function HighlightOverlay({
                 </div>
               )}
             </div>
-            {onDismiss && (
+            {dismissable && onDismiss && (
               <button
                 onClick={onDismiss}
                 className="shrink-0 p-1 rounded-lg transition-colors"

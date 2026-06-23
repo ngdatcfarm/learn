@@ -1,28 +1,27 @@
 /**
- * server/ai.ts — AI Tutor endpoints (Gemini proxy)
+ * server/ai.ts — AI Tutor endpoints (Step 13b Phase 0: provider-agnostic)
  *
- * Endpoints (Step 9b):
- *   - POST /api/tutor/chat          — text chat (existing)
- *   - POST /api/tutor/analyze       — fix/suggest/translate (existing)
- *   - POST /api/tutor/transcribe    — audio_url → transcript (NEW Step 9b)
- *   - POST /api/tutor/speak-analyze — transcript + prompt → error JSON (NEW Step 9b)
+ * Endpoints (Step 9b + Step 13b):
+ *   - POST /api/tutor/chat          — text chat
+ *   - POST /api/tutor/analyze       — fix/suggest/translate
+ *   - POST /api/tutor/transcribe    — audio_url → transcript
+ *   - POST /api/tutor/speak-analyze — transcript + prompt → error JSON
  *
- * Step 9b: thêm 2 endpoints cho multimodal (audio → text → error analysis).
- * Internal helpers `transcribeFromUrl` + `speakAnalyze` được export để 9c/9d
- * (dictation/speaking/shadowing practice endpoints) dùng mà không cần HTTP self-call.
- *
- * Offline fallback: nếu !GEMINI_API_KEY → trả stub message (giống /chat).
+ * Step 13b refactor:
+ *   - Inject AiProvider (factory in server/ai/index.ts) thay vì GoogleGenAI trực tiếp.
+ *   - Helpers `transcribeFromUrl` + `speakAnalyze` vẫn export để practice.ts dùng,
+ *     nhưng giờ wrap provider (không còn GoogleGenAI cụ thể).
+ *   - StubProvider fallback khi không có key nào.
  */
 
 import { Router, Request, Response } from "express";
-import fs from "node:fs";
 import path from "node:path";
-import { GoogleGenAI } from "@google/genai";
 import { UPLOAD_DIR, assertSafeUploadUrl } from "./audio";
 import { requireUser } from "./auth";
+import { AiProvider } from "./ai/provider";
 
 // ============================================================
-// Public types — exposed cho 9c/9d practice endpoints
+// Public types — exposed cho practice endpoints
 // ============================================================
 
 export interface SpeakError {
@@ -39,11 +38,11 @@ export interface SpeakAnalysisResult {
   raw_text: string;
 }
 
-export function aiRouter(ai: GoogleGenAI | null): Router {
+export function aiRouter(provider: AiProvider): Router {
   const router = Router();
 
   // ============================================================
-  // Existing /chat (kept)
+  // /chat — text chat
   // ============================================================
   router.post("/chat", async (req: Request, res: Response) => {
     try {
@@ -60,29 +59,16 @@ Rules:
 4. Periodically ask back a relevant question.
 5. Do not output Vietnamese unless explicitly asked, but use clear structured English.`;
 
-      const contents = messages.map((msg: any) => ({
-        role: msg.role === "assistant" ? "model" : "user",
-        parts: [{ text: msg.content }],
-      }));
-
-      if (!ai) {
-        const lastMsg = messages[messages.length - 1]?.content || "";
-        const backupReplies = [
-          `That's highly engaging! Let me suggest focusing on active recall. (Setup GEMINI_API_KEY for real chat)`,
-          `Fascinating point! In academic English, we'd structure this using sub-clauses.`,
-          `That makes complete sense. Try to incorporate more academic vocabularies.`,
-          `Excellent response! Tell me more about what you intend to accomplish.`,
-        ];
-        return res.json({ text: backupReplies[Math.floor(Math.random() * backupReplies.length)] });
-      }
-
-      const response = await ai.models.generateContent({
-        model: "gemini-2.0-flash",
-        contents,
-        config: { systemInstruction: sysInstruction, temperature: 0.7 },
+      const text = await provider.generateText({
+        system: sysInstruction,
+        messages: messages.map((m: any) => ({
+          role: m.role === "assistant" ? "assistant" : "user",
+          content: String(m.content || ""),
+        })),
+        temperature: 0.7,
       });
 
-      res.json({ text: response.text });
+      res.json({ text });
     } catch (err: any) {
       console.error("AI chat error:", err);
       res.status(500).json({ error: err.message || "AI error" });
@@ -90,25 +76,13 @@ Rules:
   });
 
   // ============================================================
-  // Existing /analyze (kept)
+  // /analyze — fix / suggest / translate
   // ============================================================
   router.post("/analyze", async (req: Request, res: Response) => {
     try {
       const { action, text } = req.body || {};
       if (!action || !text) {
         return res.status(400).json({ error: "Thiếu action hoặc text." });
-      }
-
-      if (!ai) {
-        if (action === "fix") {
-          return res.json({ analysis: `✨ **Offline**: Configure GEMINI_API_KEY for real corrections.` });
-        } else if (action === "suggest") {
-          return res.json({
-            analysis: `💡 **3 gợi ý (Offline)**:\n1. "I understand your perspective..."\n2. "That sounds fascinating..."\n3. "From my point of view..."`,
-          });
-        } else {
-          return res.json({ analysis: `🇻🇳 **Dịch (Offline)**: ${text}` });
-        }
       }
 
       let prompt = "";
@@ -122,13 +96,12 @@ Rules:
         return res.status(400).json({ error: "Action không hỗ trợ." });
       }
 
-      const response = await ai.models.generateContent({
-        model: "gemini-2.0-flash",
-        contents: prompt,
-        config: { temperature: 0.3 },
+      const analysis = await provider.generateText({
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.3,
       });
 
-      res.json({ analysis: response.text });
+      res.json({ analysis });
     } catch (err: any) {
       console.error("AI analyze error:", err);
       res.status(500).json({ error: err.message || "AI error" });
@@ -136,7 +109,7 @@ Rules:
   });
 
   // ============================================================
-  // NEW Step 9b: /transcribe — audio → text
+  // /transcribe — audio_url → text
   // ============================================================
   router.post("/transcribe", async (req: Request, res: Response) => {
     const user = await requireUser(req, res);
@@ -146,7 +119,7 @@ Rules:
       if (!audio_url) {
         return res.status(400).json({ error: "Thiếu audio_url." });
       }
-      const result = await transcribeFromUrl(ai, audio_url, mime || "audio/webm");
+      const result = await transcribeFromUrl(provider, audio_url, mime || "audio/webm");
       res.json(result);
     } catch (err: any) {
       console.error("Transcribe error:", err);
@@ -155,7 +128,7 @@ Rules:
   });
 
   // ============================================================
-  // NEW Step 9b: /speak-analyze — transcript + prompt → error JSON
+  // /speak-analyze — transcript + prompt → error JSON
   // ============================================================
   router.post("/speak-analyze", async (req: Request, res: Response) => {
     const user = await requireUser(req, res);
@@ -165,12 +138,11 @@ Rules:
       if (!transcript || !prompt) {
         return res.status(400).json({ error: "Thiếu transcript hoặc prompt." });
       }
-      // Cap transcript length before sending to Gemini
       const capped =
         typeof transcript === "string" && transcript.length > 1500
           ? transcript.slice(0, 1500)
           : transcript;
-      const result = await speakAnalyze(ai, capped, prompt, level || "A2");
+      const result = await speakAnalyze(provider, capped, prompt, level || "A2");
       res.json(result);
     } catch (err: any) {
       console.error("Speak-analyze error:", err);
@@ -182,15 +154,15 @@ Rules:
 }
 
 // ============================================================
-// Internal helpers — exported để 9c/9d dùng mà không cần HTTP
+// Internal helpers — exported để practice.ts dùng mà không cần HTTP
 // ============================================================
 
 /**
- * Read audio file from disk + send to Gemini as inlineData → return transcript.
+ * Read audio file from disk + transcribe qua provider.
  * Throws on missing file / read error.
  */
 export async function transcribeFromUrl(
-  ai: GoogleGenAI | null,
+  provider: AiProvider,
   audioUrl: string,
   mime: string
 ): Promise<{ transcript: string; confidence: "low" | "medium" | "high" }> {
@@ -198,61 +170,19 @@ export async function transcribeFromUrl(
   assertSafeUploadUrl(audioUrl);
   const rel = audioUrl.replace(/^\//, "");
   const abs = path.join(UPLOAD_DIR, rel);
-  if (!fs.existsSync(abs)) {
-    throw new Error("File không tồn tại.");
-  }
-  const buf = fs.readFileSync(abs);
-  const base64 = buf.toString("base64");
-
-  if (!ai) {
-    return { transcript: "(Offline: cấu hình GEMINI_API_KEY để transcribe thật)", confidence: "low" };
-  }
-
-  const response = await ai.models.generateContent({
-    model: "gemini-2.0-flash",
-    contents: [
-      {
-        role: "user",
-        parts: [
-          {
-            inlineData: { mimeType: mime, data: base64 },
-          },
-          {
-            text: "Transcribe the following teen English audio. Return ONLY the literal transcript, no commentary or labels.",
-          },
-        ],
-      },
-    ],
-    config: { temperature: 0.1 },
-  });
-
-  const text = (response.text || "").trim();
-  // Confidence heuristic: short/empty = low; otherwise medium
-  let confidence: "low" | "medium" | "high" = "medium";
-  if (!text) confidence = "low";
-  else if (text.length > 20) confidence = "high";
-  return { transcript: text, confidence };
+  return provider.transcribe({ filePath: abs, mimeType: mime });
 }
 
 /**
- * Send (transcript, prompt, level) → Gemini → parse JSON { errors, overall_score, encouragement }.
- * Falls back to text wrap if Gemini returns non-JSON.
+ * Send (transcript, prompt, level) → AI → parse JSON { errors, overall_score, encouragement }.
+ * Falls back to text wrap if AI returns non-JSON.
  */
 export async function speakAnalyze(
-  ai: GoogleGenAI | null,
+  provider: AiProvider,
   transcript: string,
   prompt: string,
   level: string
 ): Promise<SpeakAnalysisResult> {
-  if (!ai) {
-    return {
-      errors: [],
-      overall_score: 5,
-      encouragement: "Cấu hình GEMINI_API_KEY để nhận phân tích chi tiết nhé!",
-      raw_text: "",
-    };
-  }
-
   const sysPrompt = `You are an encouraging English tutor for Vietnamese high schoolers (CEFR ${level}).
 Given a learner prompt and the teen's spoken response, return STRICT JSON with this shape:
 {
@@ -263,28 +193,22 @@ Given a learner prompt and the teen's spoken response, return STRICT JSON with t
 Max 5 errors. Be encouraging, age-appropriate. If the response is perfect, return empty errors array.
 Return ONLY the JSON object — no markdown, no commentary.`;
 
-  const response = await ai.models.generateContent({
-    model: "gemini-2.0-flash",
-    contents: [
+  const raw = await provider.generateText({
+    system: sysPrompt,
+    messages: [
       {
         role: "user",
-        parts: [
-          { text: `Prompt: ${prompt}\n\nLearner response (CEFR ${level}): ${transcript}` },
-        ],
+        content: `Prompt: ${prompt}\n\nLearner response (CEFR ${level}): ${transcript}`,
       },
     ],
-    config: {
-      systemInstruction: sysPrompt,
-      temperature: 0.3,
-      responseMimeType: "application/json",
-    },
+    temperature: 0.3,
   });
 
-  const raw = (response.text || "").trim();
+  const trimmed = raw.trim();
 
   // Try parse JSON; if fail, wrap into safe defaults
   try {
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(trimmed);
     const errors: SpeakError[] = Array.isArray(parsed.errors)
       ? parsed.errors.slice(0, 5).map((e: any) => ({
           type: typeof e.type === "string" ? e.type : "other",
@@ -305,15 +229,14 @@ Return ONLY the JSON object — no markdown, no commentary.`;
       errors,
       overall_score: score,
       encouragement,
-      raw_text: raw,
+      raw_text: trimmed,
     };
   } catch {
-    // Fallback — wrap as non-JSON
     return {
       errors: [],
       overall_score: 5,
       encouragement: "Mình đã nghe bạn — hãy tiếp tục luyện tập nhé!",
-      raw_text: raw,
+      raw_text: trimmed,
     };
   }
 }

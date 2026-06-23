@@ -32,11 +32,11 @@
 
 import { Router, Request, Response } from "express";
 import crypto from "node:crypto";
-import { GoogleGenAI } from "@google/genai";
 import { requireUser } from "./auth";
 import { query, queryOne, withTransaction } from "../db/client";
 import { transcribeFromUrl, speakAnalyze, SpeakAnalysisResult } from "./ai";
 import { assertSafeUploadUrl } from "./audio";
+import { AiProvider } from "./ai/provider";
 
 // ============================================================
 // Public types
@@ -91,7 +91,7 @@ export interface ShadowingCheckResult {
 // Router factory
 // ============================================================
 
-export function practiceRouter(ai: GoogleGenAI | null): Router {
+export function practiceRouter(provider: AiProvider): Router {
   const router = Router();
 
   // ============================================================
@@ -235,12 +235,12 @@ export function practiceRouter(ai: GoogleGenAI | null): Router {
 
       // STT
       const { transcript, confidence } = await transcribeFromUrl(
-        ai,
+        provider,
         audioUrl,
         mime || "audio/webm"
       );
 
-      // Skip speakAnalyze nếu transcript rỗng (cost saving — Gemini trả tiền/call,
+      // Skip speakAnalyze nếu transcript rỗng (cost saving — provider trả tiền/call,
       // và phân tích câu rỗng không có giá trị).
       let analysis: SpeakAnalysisResult;
       if (!transcript || transcript.trim().length === 0) {
@@ -251,7 +251,7 @@ export function practiceRouter(ai: GoogleGenAI | null): Router {
           raw_text: "",
         };
       } else {
-        analysis = await speakAnalyze(ai, transcript, resolved.prompt, resolved.level);
+        analysis = await speakAnalyze(provider, transcript, resolved.prompt, resolved.level);
       }
 
       const recordingId = crypto.randomUUID();
@@ -322,7 +322,7 @@ export function practiceRouter(ai: GoogleGenAI | null): Router {
 
       // STT (reuse 9b). Nếu transcript rỗng → score=0, diff empty.
       const { transcript, confidence } = await transcribeFromUrl(
-        ai,
+        provider,
         audioUrl,
         mime || "audio/webm"
       );
